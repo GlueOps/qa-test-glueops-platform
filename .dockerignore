@@ -1,0 +1,9 @@
+.gitignore
+kubeconfig
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+test_vault_e2e.py
+run-docker.sh
+run-tests.sh

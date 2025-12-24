@@ -1,0 +1,10 @@
+kubeconfig
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.pytest_cache/
+baselines/*.json
+reports/*.html
+reports/*.json
+reports/*.xml
