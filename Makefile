@@ -5,7 +5,8 @@
 DOCKER_RUN = docker run --rm --network host
 DOCKER_VOLUMES = -v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
                  -v "/workspaces/glueops:/workspaces/glueops:ro" \
-                 -v "$$(pwd)/reports:/app/reports"
+                 -v "$$(pwd)/reports:/app/reports" \
+                 -v "$$(pwd)/baselines:/app/baselines"
 DOCKER_VOLUMES_UI = -v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
                     -v "$$(pwd)/reports:/app/reports"
 ENV_FILE_FLAG = $(shell [ -f .env ] && echo "--env-file .env" || echo "")

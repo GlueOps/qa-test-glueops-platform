@@ -48,22 +48,29 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
     
-    # Add screenshots to HTML report if they exist  
+    # Add test description (docstring) to the report
     if report.when == 'call':
-        # Get screenshots from test if they were stored
-        screenshots = getattr(item, '_screenshots', [])
-        if screenshots:
-            try:
-                from pytest_html import extras
-                extra = getattr(report, 'extras', [])
+        try:
+            from pytest_html import extras
+            extra = getattr(report, 'extras', [])
+            
+            # Add docstring as description if it exists
+            if item.obj.__doc__:
+                docstring = item.obj.__doc__.strip()
+                extra.append(extras.html(f'<div style="margin: 10px 0; padding: 10px; background-color: #f5f5f5; border-left: 3px solid #2196F3;"><strong>Description:</strong><br>{docstring}</div>'))
+            
+            # Add screenshots to HTML report if they exist  
+            screenshots = getattr(item, '_screenshots', [])
+            if screenshots:
                 for screenshot_path, description in screenshots:
                     if Path(screenshot_path).exists():
                         # Add as clickable link to the screenshot file
                         rel_path = Path(screenshot_path).name
                         extra.append(extras.html(f'<div><a href="screenshots/{rel_path}" target="_blank">{description}</a></div>'))
-                report.extras = extra
-            except Exception:
-                pass
+            
+            report.extras = extra
+        except Exception:
+            pass
 
 
 @pytest.fixture(scope="session")

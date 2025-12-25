@@ -187,7 +187,8 @@ def test_vault_secret_creation(captain_domain, request):
             try:
                 secret = client.secrets.kv.v2.read_secret_version(
                     path=path,
-                    mount_point='secret'
+                    mount_point='secret',
+                    raise_on_deleted_version=False
                 )
                 if not secret['data']['data']:
                     verification_failures.append(f"{path}: empty data")

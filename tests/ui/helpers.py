@@ -159,7 +159,7 @@ def take_screenshot(page: Page, description: str, attach_screenshot_fn) -> Path:
     screenshot_path = Path("./reports/screenshots") / f"{description.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
     screenshot_path.parent.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(screenshot_path), full_page=True)
-    attach_screenshot_fn(screenshot_path, description)
+    attach_screenshot_fn(screenshot_path, f"SCREENSHOT: {description}")
     return screenshot_path
 
 
