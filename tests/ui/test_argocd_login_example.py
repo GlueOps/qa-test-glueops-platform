@@ -14,13 +14,14 @@ Required environment variables:
 import os
 import logging
 import pytest
+from tests.ui.helpers import ScreenshotManager
 
 log = logging.getLogger(__name__)
 
 
 @pytest.mark.authenticated
 @pytest.mark.ui
-def test_argocd_login_via_github(page, github_credentials, captain_domain):
+def test_argocd_login_via_github(page, github_credentials, captain_domain, request):
     """
     Test ArgoCD login via GitHub OAuth flow.
     
@@ -95,3 +96,10 @@ def test_argocd_login_via_github(page, github_credentials, captain_domain):
         raise Exception(f"Failed to reach applications page. Current URL: {page.url}")
     
     log.info("✅ ArgoCD applications page fully loaded")
+    
+    # Initialize screenshot manager and capture final state
+    screenshot_manager = ScreenshotManager(test_name="argocd_login", request=request)
+    screenshot_manager.capture(page, page.url, description="ArgoCD Applications Page")
+    
+    # Log summary
+    screenshot_manager.log_summary()

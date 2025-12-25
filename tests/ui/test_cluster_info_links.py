@@ -65,6 +65,13 @@ def test_cluster_info_links(page, github_credentials, captain_domain, request):
     
     log.info("✅ Successfully loaded cluster-info page")
     
+    # Initialize screenshot manager - pass request to auto-detect report directory
+    screenshot_manager = ScreenshotManager(test_name="cluster_info_links", request=request)
+    
+    # Capture screenshot of the cluster-info page before clicking links
+    screenshot_manager.capture(page, cluster_info_url, description="Cluster Info Landing Page")
+    log.info("📸 Captured screenshot of cluster-info page")
+    
     # Find all HTTPS links on the page
     log.info("Finding all HTTPS links on the page...")
     https_links = page.locator('a[href^="https://"]').all()
@@ -89,9 +96,6 @@ def test_cluster_info_links(page, github_credentials, captain_domain, request):
             unique_links.append(url)
     
     log.info(f"Found {len(unique_links)} unique HTTPS links to test")
-    
-    # Initialize screenshot manager - pass request to auto-detect report directory
-    screenshot_manager = ScreenshotManager(test_name="cluster_info_links", request=request)
     
     # Visit each link
     for i, link_url in enumerate(unique_links, 1):
