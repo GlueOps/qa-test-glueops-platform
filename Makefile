@@ -94,28 +94,14 @@ ui: check-env build setup-kubeconfig setup-ui-reports
 		--json-report --json-report-file=reports/ui-auth-report.json
 
 full: check-env build setup-kubeconfig setup-reports setup-ui-reports
-	@echo "Running API/K8s tests (smoke + write)..."
+	@echo "Running ALL tests..."
 	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m "smoke or write" -vv \
-		--html=reports/full-api-report.html --self-contained-html \
-		--json-report --json-report-file=reports/full-api-report.json
-	@echo "Running UI OAuth redirect tests..."
-	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
-		$(ENV_FILE_FLAG) \
-		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m oauth_redirect tests/ui/ -vv \
-		--html=reports/full-ui-oauth-report.html --self-contained-html \
-		--json-report --json-report-file=reports/full-ui-oauth-report.json
-	@echo "Running UI authenticated tests..."
-	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
-		$(ENV_FILE_FLAG) \
-		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m authenticated tests/ui/ -vv \
-		--html=reports/full-ui-auth-report.html --self-contained-html \
-		--json-report --json-report-file=reports/full-ui-auth-report.json
-	@echo "✅ Full test suite complete! Check reports/ for results."
+		glueops-tests -vv \
+		--html=reports/full-report.html --self-contained-html \
+		--json-report --json-report-file=reports/full-report.json
+	@echo "✅ Full test suite complete! Check reports/full-report.html for results."
 
 # Cleanup
 clean:
