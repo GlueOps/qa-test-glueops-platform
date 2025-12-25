@@ -1,33 +1,14 @@
 """Test cluster-info page and verify all HTTPS links are accessible."""
 import pytest
 import logging
-from tests.ui.helpers import (
-    get_browser_connection,
-    create_incognito_context,
-    create_new_page,
-    take_screenshot,
-    cleanup_browser
-)
 
 log = logging.getLogger(__name__)
-
-
-@pytest.fixture
-def attach_screenshot(request):
-    """Pytest fixture to attach screenshots to HTML report."""
-    if not hasattr(request.node, '_screenshots'):
-        request.node._screenshots = []
-    
-    def _attach(screenshot_path, description: str = ""):
-        request.node._screenshots.append((str(screenshot_path), description))
-    
-    yield _attach
 
 
 @pytest.mark.authenticated
 @pytest.mark.slow
 @pytest.mark.ui
-def test_cluster_info_links(github_credentials, captain_domain, attach_screenshot):
+def test_cluster_info_links(page, github_credentials, captain_domain):
     """
     Test cluster-info page login and verify all HTTPS links are accessible.
     
@@ -52,117 +33,89 @@ def test_cluster_info_links(github_credentials, captain_domain, attach_screensho
         export CAPTAIN_DOMAIN="nonprod.foobar.onglueops.rocks"
         pytest tests/ui/test_cluster_info_links.py::test_cluster_info_links -v -s
     """
-    playwright, browser, session = get_browser_connection()
+    # Build cluster-info URL using captain_domain
+    cluster_info_url = f"https://cluster-info.{captain_domain}/"
     
-    try:
-        # Create incognito context
-        context = create_incognito_context(browser)
-        page = create_new_page(context)
-        
-        # Build cluster-info URL using captain_domain
-        cluster_info_url = f"https://cluster-info.{captain_domain}/"
-        
-        # Navigate directly to cluster-info page - will redirect to GitHub OAuth
-        log.info(f"Navigating to cluster-info page: {cluster_info_url}")
-        page.goto(cluster_info_url, wait_until="load", timeout=30000)
-        log.info(f"After navigation, current URL: {page.url}")
-        
-        # Handle GitHub OAuth if redirected
-        if "github.com" in page.url:
-            log.info("Redirected to GitHub - completing OAuth...")
-            from tests.ui.helpers import complete_github_oauth_flow
-            complete_github_oauth_flow(page, github_credentials)
-            log.info(f"After OAuth, current URL: {page.url}")
-            page.wait_for_timeout(3000)
-        
-        # Navigate to cluster-info page one final time to ensure we're there
-        log.info(f"Final navigation to cluster-info page: {cluster_info_url}")
-        page.goto(cluster_info_url, wait_until="load", timeout=30000)
-        log.info(f"Final URL: {page.url}")
-        
-        # Wait for page to load
-        page.wait_for_timeout(5000)
-        
-        # Verify we're on the cluster-info page
-        if "cluster-info" not in page.url:
-            log.error(f"Not on cluster-info page. Current URL: {page.url}")
-            take_screenshot(page, "Cluster Info Login Failed", attach_screenshot)
-            raise Exception("Failed to reach cluster-info page")
-        
-        log.info("✅ Successfully loaded cluster-info page")
-        log.info("📸 Taking screenshot of cluster-info main page...")
-        take_screenshot(page, "Cluster Info Main Page", attach_screenshot)
-        log.info("Screenshot saved: Cluster Info Main Page")
-        
-        # Find all HTTPS links on the page
-        log.info("Finding all HTTPS links on the page...")
-        https_links = page.locator('a[href^="https://"]').all()
-        log.info(f"Found {len(https_links)} HTTPS links on the page")
-        
-        # Get all the URLs from the links
-        link_urls = []
-        for link in https_links:
-            try:
-                href = link.get_attribute("href")
-                if href and href.startswith("https://"):
-                    link_urls.append(href)
-            except Exception as e:
-                log.warning(f"Could not get href from link: {e}")
-        
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_links = []
-        for url in link_urls:
-            if url not in seen:
-                seen.add(url)
-                unique_links.append(url)
-        
-        log.info(f"Found {len(unique_links)} unique HTTPS links to test")
-        
-        # Visit each link
-        for i, link_url in enumerate(unique_links, 1):
-            try:
-                log.info(f"{'='*60}")
-                log.info(f"[{i}/{len(unique_links)}] Visiting: {link_url}")
-                log.info(f"{'='*60}")
-                
-                # Navigate to the link
-                page.goto(link_url, wait_until="load", timeout=30000)
-                log.info(f"Page loaded: {page.url}")
-                
-                # Wait 5 seconds on the page
-                log.info("Waiting 5 seconds on page...")
-                page.wait_for_timeout(5000)
-                
-                # Take screenshot
-                # Create a safe filename from the URL
-                safe_name = link_url.replace("https://", "").replace("/", "_").replace(":", "_")
-                if len(safe_name) > 100:
-                    safe_name = safe_name[:100]
-                
-                screenshot_description = f"Link {i} - {safe_name}"
-                log.info(f"📸 Taking screenshot: {screenshot_description}")
-                take_screenshot(page, screenshot_description, attach_screenshot)
-                
-                log.info(f"✅ Successfully captured screenshot for: {link_url}")
-                
-            except Exception as e:
-                log.error(f"❌ Error visiting {link_url}: {e}")
-                try:
-                    take_screenshot(page, f"Link {i} - Error", attach_screenshot)
-                except:
-                    pass
+    # Navigate directly to cluster-info page - will redirect to GitHub OAuth
+    log.info(f"Navigating to cluster-info page: {cluster_info_url}")
+    page.goto(cluster_info_url, wait_until="load", timeout=30000)
+    log.info(f"After navigation, current URL: {page.url}")
+    
+    # Handle GitHub OAuth if redirected
+    if "github.com" in page.url:
+        log.info("Redirected to GitHub - completing OAuth...")
+        from tests.ui.helpers import complete_github_oauth_flow
+        complete_github_oauth_flow(page, github_credentials)
+        log.info(f"After OAuth, current URL: {page.url}")
+        page.wait_for_timeout(3000)
+    
+    # Navigate to cluster-info page one final time to ensure we're there
+    log.info(f"Final navigation to cluster-info page: {cluster_info_url}")
+    page.goto(cluster_info_url, wait_until="load", timeout=30000)
+    log.info(f"Final URL: {page.url}")
+    
+    # Wait for page to load
+    page.wait_for_timeout(5000)
+    
+    # Verify we're on the cluster-info page
+    if "cluster-info" not in page.url:
+        log.error(f"Not on cluster-info page. Current URL: {page.url}")
+        raise Exception("Failed to reach cluster-info page")
+    
+    log.info("✅ Successfully loaded cluster-info page")
+    
+    # Find all HTTPS links on the page
+    log.info("Finding all HTTPS links on the page...")
+    https_links = page.locator('a[href^="https://"]').all()
+    log.info(f"Found {len(https_links)} HTTPS links on the page")
+    
+    # Get all the URLs from the links
+    link_urls = []
+    for link in https_links:
+        try:
+            href = link.get_attribute("href")
+            if href and href.startswith("https://"):
+                link_urls.append(href)
+        except Exception as e:
+            log.warning(f"Could not get href from link: {e}")
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_links = []
+    for url in link_urls:
+        if url not in seen:
+            seen.add(url)
+            unique_links.append(url)
+    
+    log.info(f"Found {len(unique_links)} unique HTTPS links to test")
+    
+    # Visit each link
+    for i, link_url in enumerate(unique_links, 1):
+        try:
+            log.info(f"{'='*60}")
+            log.info(f"[{i}/{len(unique_links)}] Visiting: {link_url}")
+            log.info(f"{'='*60}")
             
-            # Return to cluster-info page for next iteration
-            if i < len(unique_links):
-                try:
-                    log.info(f"Returning to cluster-info page...")
-                    page.goto(cluster_info_url, wait_until="load", timeout=30000)
-                    page.wait_for_timeout(2000)
-                except Exception as e:
-                    log.warning(f"Could not return to cluster-info page: {e}")
+            # Navigate to the link
+            page.goto(link_url, wait_until="load", timeout=30000)
+            log.info(f"Page loaded: {page.url}")
+            
+            # Wait 5 seconds on the page
+            log.info("Waiting 5 seconds on page...")
+            page.wait_for_timeout(5000)
+            
+            log.info(f"✅ Successfully visited: {link_url}")
+            
+        except Exception as e:
+            log.error(f"❌ Error visiting {link_url}: {e}")
         
-        log.info(f"✅ Completed testing {len(unique_links)} links")
-        
-    finally:
-        cleanup_browser(playwright, page, context, session)
+        # Return to cluster-info page for next iteration
+        if i < len(unique_links):
+            try:
+                log.info(f"Returning to cluster-info page...")
+                page.goto(cluster_info_url, wait_until="load", timeout=30000)
+                page.wait_for_timeout(2000)
+            except Exception as e:
+                log.warning(f"Could not return to cluster-info page: {e}")
+    
+    log.info(f"✅ Completed testing {len(unique_links)} links")

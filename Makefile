@@ -29,6 +29,7 @@ ARGS ?= $(filter-out test,$(MAKECMDGOALS))
 
 # Common pytest flags
 PYTEST_COMMON_FLAGS = --screenshots=reports/screenshots \
+                      --capture-screenshots=all \
                       --git-branch="$(GIT_BRANCH)" \
                       --git-commit="$(GIT_COMMIT)"
 
@@ -139,8 +140,8 @@ clean:
 
 clean-reports:
 	@echo "Removing all test reports and artifacts from reports/..."
-	@find reports -type f -not -name '.keep' -delete
-	@find reports -mindepth 1 -type d -empty -delete
+	@sudo find reports -type f -not -name '.keep' -delete
+	@sudo find reports -mindepth 1 -type d -empty -delete
 
 clean-baselines:
 	rm -f baselines/*.json
