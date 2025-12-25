@@ -11,6 +11,7 @@ PASSABLE_ALERTS = [
 ]
 
 
+@pytest.mark.smoke
 @pytest.mark.quick
 @pytest.mark.critical
 @pytest.mark.readonly

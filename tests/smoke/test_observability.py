@@ -86,7 +86,8 @@ def load_baseline(baseline_file):
         return json.load(f)
 
 
-@pytest.mark.slow
+@pytest.mark.smoke
+@pytest.mark.quick
 @pytest.mark.important
 @pytest.mark.readonly
 @pytest.mark.observability

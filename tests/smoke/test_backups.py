@@ -72,6 +72,7 @@ def create_vault_backup_test_secret(captain_domain, vault_namespace="glueops-cor
         return False
 
 
+@pytest.mark.smoke
 @pytest.mark.quick
 @pytest.mark.important
 @pytest.mark.readonly
