@@ -7,3 +7,5 @@ __pycache__/
 test_vault_e2e.py
 run-docker.sh
 run-tests.sh
+.env
+
