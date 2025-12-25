@@ -66,21 +66,9 @@ def pytest_runtest_makereport(item, call):
                 except ImportError:
                     pass
             
-            # For pytest-reporter-plus: automatically captures screenshots on failure
-            # Screenshots in reports/screenshots/ are automatically linked if --capture-screenshots is enabled
-            # For manual screenshot attachment, use the attach_screenshot fixture
-            screenshots = getattr(item, '_screenshots', [])
-            if screenshots:
-                try:
-                    from pytest_html import extras
-                    for screenshot_path, description in screenshots:
-                        if Path(screenshot_path).exists():
-                            # Add as clickable link to the screenshot file
-                            rel_path = Path(screenshot_path).name
-                            extra.append(extras.html(f'<div><a href="screenshots/{rel_path}" target="_blank">📸 {description}</a></div>'))
-                except ImportError:
-                    # pytest-reporter-plus will handle screenshots automatically if in the screenshots directory
-                    pass
+            # pytest-html-plus automatically captures and embeds screenshots from the screenshots/ directory
+            # Screenshots are found by test name matching and automatically linked in the HTML report
+            # No manual attachment needed - the framework handles it via find_screenshot_and_copy()
             
             report.extras = extra
         except Exception:

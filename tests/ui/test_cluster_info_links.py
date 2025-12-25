@@ -1,6 +1,7 @@
 """Test cluster-info page and verify all HTTPS links are accessible."""
 import pytest
 import logging
+from tests.ui.helpers import ScreenshotManager
 
 log = logging.getLogger(__name__)
 
@@ -8,7 +9,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.authenticated
 @pytest.mark.slow
 @pytest.mark.ui
-def test_cluster_info_links(page, github_credentials, captain_domain):
+def test_cluster_info_links(page, github_credentials, captain_domain, request):
     """
     Test cluster-info page login and verify all HTTPS links are accessible.
     
@@ -89,6 +90,9 @@ def test_cluster_info_links(page, github_credentials, captain_domain):
     
     log.info(f"Found {len(unique_links)} unique HTTPS links to test")
     
+    # Initialize screenshot manager - pass request to auto-detect report directory
+    screenshot_manager = ScreenshotManager(test_name="cluster_info_links", request=request)
+    
     # Visit each link
     for i, link_url in enumerate(unique_links, 1):
         try:
@@ -104,6 +108,9 @@ def test_cluster_info_links(page, github_credentials, captain_domain):
             log.info("Waiting 5 seconds on page...")
             page.wait_for_timeout(5000)
             
+            # Capture screenshot using centralized manager
+            screenshot_manager.capture(page, link_url, description=f"Link {i}")
+            
             log.info(f"✅ Successfully visited: {link_url}")
             
         except Exception as e:
@@ -117,5 +124,6 @@ def test_cluster_info_links(page, github_credentials, captain_domain):
                 page.wait_for_timeout(2000)
             except Exception as e:
                 log.warning(f"Could not return to cluster-info page: {e}")
-    
+        
     log.info(f"✅ Completed testing {len(unique_links)} links")
+    screenshot_manager.log_summary()

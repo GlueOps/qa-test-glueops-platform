@@ -2,9 +2,11 @@
 import os
 import logging
 import pyotp
+import uuid
 from pathlib import Path
 from datetime import datetime
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
+from typing import List, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -490,4 +492,135 @@ def complete_github_oauth_flow(page: Page, credentials: dict):
     
     else:
         log.warning(f"Unexpected URL - not a GitHub OAuth or login page: {current_url}")
+
+
+class ScreenshotManager:
+    """
+    Centralized screenshot management for UI tests.
+    
+    Handles screenshot capture with UUID7 filenames, relative path tracking,
+    and summary generation for pytest-html-plus reports.
+    
+    Example usage:
+        manager = ScreenshotManager(request=request)
+        manager.capture(page, "https://example.com", "Example Site")
+        manager.log_summary()  # Prints summary to logs
+    """
+    
+    def __init__(self, screenshots_dir: str = None, test_name: str = None, request=None):
+        """
+        Initialize screenshot manager.
+        
+        Args:
+            screenshots_dir: Directory to save screenshots (auto-detected from pytest config if not provided)
+            test_name: Optional test name prefix for organization
+            request: Pytest request fixture (used to auto-detect report directory)
+        """
+        if screenshots_dir is None:
+            # Try to auto-detect from pytest config
+            if request and hasattr(request, 'config'):
+                html_output = request.config.getoption("--html-output", default=None)
+                if html_output:
+                    screenshots_dir = f"{html_output}/screenshots"
+                else:
+                    screenshots_dir = "reports/screenshots"
+            else:
+                screenshots_dir = "reports/screenshots"
+        self.screenshots_dir = Path(screenshots_dir)
+        self.test_name = test_name or "test"
+        self.screenshots: List[Tuple[str, str, str]] = []  # [(filename, url, description)]
+        
+        # Ensure directory exists
+        self.screenshots_dir.mkdir(parents=True, exist_ok=True)
+    
+    def capture(
+        self, 
+        page: Page, 
+        url: str, 
+        description: str = None,
+        full_page: bool = True
+    ) -> Path:
+        """
+        Capture a screenshot with friendly name and UUID suffix for uniqueness.
+        
+        Args:
+            page: Playwright page instance
+            url: URL being captured
+            description: Optional description (defaults to URL)
+            full_page: Whether to capture full page (default: True)
+            
+        Returns:
+            Path: Absolute path to saved screenshot
+        """
+        # Generate friendly filename with UUID suffix for uniqueness
+        uuid_suffix = str(uuid.uuid4())[:8]  # First 8 chars of UUID
+        base_name = self.test_name.replace(" ", "_").lower()
+        screenshot_filename = f"{base_name}_{uuid_suffix}.png"
+        screenshot_path = self.screenshots_dir / screenshot_filename
+        
+        # Capture screenshot
+        log.info(f"📸 Capturing screenshot: {screenshot_filename}")
+        page.screenshot(path=str(screenshot_path), full_page=full_page)
+        
+        # Store metadata
+        desc = description or url
+        self.screenshots.append((screenshot_filename, url, desc))
+        log.info(f"✅ Screenshot saved: {screenshot_filename}")
+        
+        return screenshot_path.absolute()
+    
+    def get_relative_path(self, filename: str) -> str:
+        """
+        Get relative path for HTML report links.
+        
+        Args:
+            filename: Screenshot filename
+            
+        Returns:
+            str: Relative path (e.g., "screenshots/uuid.png")
+        """
+        return f"screenshots/{filename}"
+    
+    def log_summary(self):
+        """
+        Log summary of all captured screenshots with clickable HTML links.
+        
+        Outputs two sections:
+        1. Plain text summary for terminal/logs
+        2. HTML summary with clickable links for pytest-html-plus report
+        """
+        if not self.screenshots:
+            log.info("No screenshots captured")
+            return
+        
+        # Plain text summary
+        log.info("\n" + "="*80)
+        log.info(f"📸 SCREENSHOTS CAPTURED: {len(self.screenshots)} total")
+        log.info("="*80)
+        for i, (filename, url, desc) in enumerate(self.screenshots, 1):
+            log.info(f"{i:2d}. {filename:50s} -> {url}")
+        log.info("="*80)
+        
+        # HTML summary with clickable links
+        log.info("\n" + "="*80)
+        log.info("📸 CLICKABLE SCREENSHOT LINKS (HTML):")
+        log.info("="*80)
+        for i, (filename, url, desc) in enumerate(self.screenshots, 1):
+            rel_path = self.get_relative_path(filename)
+            log.info(f"{i:2d}. <a href='{rel_path}' target='_blank'>{filename}</a> -> {url}")
+        log.info("="*80)
+    
+    def get_screenshot_count(self) -> int:
+        """Get total number of screenshots captured."""
+        return len(self.screenshots)
+    
+    def get_screenshots(self) -> List[Tuple[str, str, str]]:
+        """
+        Get all captured screenshots metadata.
+        
+        Returns:
+            List of tuples: [(filename, url, description), ...]
+        """
+        return self.screenshots.copy()
+
         return False
