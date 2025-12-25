@@ -1,4 +1,4 @@
-.PHONY: help test build clean clean-baselines results discover markers fixtures \
+.PHONY: help test build clean clean-reports clean-baselines results discover markers fixtures \
         check-env setup-kubeconfig setup-reports setup-ui-reports \
         quick api ui gitops full
 
@@ -67,6 +67,7 @@ help:
 	@echo "Utilities:"
 	@echo "  make build         - Build Docker image"
 	@echo "  make clean         - Remove test artifacts and kubeconfig"
+	@echo "  make clean-reports - Remove all gitignored files from reports/"
 	@echo "  make clean-baselines - Remove Prometheus metrics baseline files"
 	@echo "  make discover      - List all tests with descriptions"
 	@echo "  make markers       - Show available pytest markers"
@@ -133,6 +134,11 @@ full:
 # Cleanup
 clean:
 	rm -rf .pytest_cache reports/*.html reports/*.json kubeconfig
+
+clean-reports:
+	@echo "Removing all test reports and artifacts from reports/..."
+	@find reports -type f -not -name '.keep' -delete
+	@find reports -mindepth 1 -type d -empty -delete
 
 clean-baselines:
 	rm -f baselines/*.json
