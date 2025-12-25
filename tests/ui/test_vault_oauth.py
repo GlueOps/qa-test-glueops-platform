@@ -23,8 +23,11 @@ def attach_screenshot(request):
 
 @pytest.fixture(scope="session")
 def captain_domain():
-    """Get captain domain from environment or use default."""
-    return os.environ.get("CAPTAIN_DOMAIN", "nonprod.foobar.onglueops.rocks")
+    """Get captain domain from environment."""
+    domain = os.environ.get("CAPTAIN_DOMAIN")
+    if not domain:
+        pytest.skip("CAPTAIN_DOMAIN environment variable not set")
+    return domain
 
 
 @pytest.mark.oauth_redirect

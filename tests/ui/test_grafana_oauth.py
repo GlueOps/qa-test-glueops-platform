@@ -22,7 +22,7 @@ def attach_screenshot(request):
 
 @pytest.mark.oauth_redirect
 @pytest.mark.ui
-def test_grafana_github_oauth_redirect(attach_screenshot):
+def test_grafana_github_oauth_redirect(attach_screenshot, captain_domain):
     """
     Test Grafana redirects to GitHub OAuth login in incognito mode.
     
@@ -40,7 +40,7 @@ def test_grafana_github_oauth_redirect(attach_screenshot):
         page = context.new_page()
         
         # Navigate and verify GitHub OAuth redirect
-        grafana_url = "https://grafana.nonprod.foobar.onglueops.rocks/"
+        grafana_url = f"https://grafana.{captain_domain}/"
         redirected = verify_github_oauth_redirect(page, grafana_url, attach_screenshot)
         
         # Assert that we got redirected to GitHub

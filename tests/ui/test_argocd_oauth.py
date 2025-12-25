@@ -22,7 +22,7 @@ def attach_screenshot(request):
 
 @pytest.mark.oauth_redirect
 @pytest.mark.ui
-def test_argocd_github_oauth_redirect(attach_screenshot):
+def test_argocd_github_oauth_redirect(attach_screenshot, captain_domain):
     """
     Test ArgoCD redirects to GitHub OAuth login in incognito mode.
     
@@ -40,7 +40,7 @@ def test_argocd_github_oauth_redirect(attach_screenshot):
         page = context.new_page()
         
         # Navigate and verify GitHub OAuth redirect
-        argocd_url = "https://argocd.nonprod.foobar.onglueops.rocks"
+        argocd_url = f"https://argocd.{captain_domain}"
         redirected = verify_github_oauth_redirect(page, argocd_url, attach_screenshot)
         
         # Assert that we got redirected to GitHub

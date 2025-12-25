@@ -30,7 +30,7 @@ def attach_screenshot(request):
 
 @pytest.mark.oauth_redirect
 @pytest.mark.ui
-def test_cluster_info_github_oauth_redirect(attach_screenshot):
+def test_cluster_info_github_oauth_redirect(attach_screenshot, captain_domain):
     """
     Test cluster-info redirects to GitHub OAuth login in incognito mode.
     
@@ -48,7 +48,7 @@ def test_cluster_info_github_oauth_redirect(attach_screenshot):
         page = context.new_page()
         
         # Navigate and verify GitHub OAuth redirect
-        cluster_info_url = "https://cluster-info.nonprod.foobar.onglueops.rocks/"
+        cluster_info_url = f"https://cluster-info.{captain_domain}/"
         redirected = verify_github_oauth_redirect(page, cluster_info_url, attach_screenshot)
         
         # Assert that we got redirected to GitHub

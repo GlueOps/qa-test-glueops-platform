@@ -1,236 +1,120 @@
-.PHONY: help test full verbose quick critical parallel ui build clean clean-baselines \
-        local-test local-full local-verbose local-quick local-critical local-parallel local-ui \
-        report-html report-json install discover markers fixtures results \
-        local-discover local-markers local-fixtures
+.PHONY: help quick api ui full build clean clean-baselines results discover markers fixtures \
+        check-env setup-kubeconfig setup-reports setup-ui-reports
+
+# Docker run base configuration
+DOCKER_RUN = docker run --rm --network host
+DOCKER_VOLUMES = -v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
+                 -v "/workspaces/glueops:/workspaces/glueops:ro" \
+                 -v "$$(pwd)/reports:/app/reports"
+DOCKER_VOLUMES_UI = -v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
+                    -v "$$(pwd)/reports:/app/reports"
+ENV_FILE_FLAG = $(shell [ -f .env ] && echo "--env-file .env" || echo "")
 
 help:
 	@echo "GlueOps Test Suite (Pytest)"
 	@echo ""
-	@echo "Docker execution (default):"
-	@echo "  make test          - Run smoke tests in Docker"
-	@echo "  make full          - Run full tests (smoke + write operations)"
-	@echo "  make verbose       - Run with verbose output"
-	@echo "  make quick         - Run only quick tests (<5s)"
-	@echo "  make critical      - Run only critical tests"
-	@echo "  make parallel      - Run tests in parallel (8 workers)"
-	@echo "  make ui            - Run UI tests (Selenium/Playwright)"
-	@echo "  make build         - Build Docker image"
-	@echo ""
-	@echo "Local execution (requires: make local-install):"
-	@echo "  make local-test    - Run smoke tests locally"
-	@echo "  make local-full    - Run full tests locally"
-	@echo "  make local-verbose - Run with verbose output locally"
-	@echo "  make local-quick   - Run quick tests locally"
-	@echo "  make local-critical - Run critical tests locally"
-	@echo "  make local-parallel - Run tests in parallel locally"
-	@echo "  make local-ui      - Run UI tests locally"
+	@echo "Test Execution:"
+	@echo "  make quick         - Run quick tests (<5s) with verbose output"
+	@echo "  make api           - Run API/K8s tests (smoke + write operations)"
+	@echo "  make ui            - Run all UI tests (OAuth + authenticated)"
+	@echo "  make full          - Run EVERYTHING (api + ui tests)"
 	@echo ""
 	@echo "Reports:"
-	@echo "  make report-html   - Generate HTML test report"
-	@echo "  make report-json   - Generate JSON test report"
 	@echo "  make results       - Serve reports on http://localhost:8989"
+	@echo "  Note: All commands generate HTML and JSON reports in reports/"
 	@echo ""
 	@echo "Utilities:"
+	@echo "  make build         - Build Docker image"
 	@echo "  make clean         - Remove test artifacts and kubeconfig"
 	@echo "  make clean-baselines - Remove Prometheus metrics baseline files"
-	@echo "  make local-install - Install Python dependencies locally"
-	@echo ""
-	@echo "Test Discovery (Docker):"
 	@echo "  make discover      - List all tests with descriptions"
-	@echo "  make markers       - Show available markers"
-	@echo "  make fixtures      - Show available fixtures"
+	@echo "  make markers       - Show available pytest markers"
+	@echo "  make fixtures      - Show available pytest fixtures"
 	@echo ""
-	@echo "Test Discovery (Local):"
-	@echo "  make local-discover - List all tests with descriptions locally"
-	@echo "  make local-markers  - Show available markers locally"
-	@echo "  make local-fixtures - Show available fixtures locally"
+	@echo "Setup:"
+	@echo "  1. Copy .env.example to .env"
+	@echo "  2. Configure your environment variables"
+	@echo "  3. Run: make quick, make api, make ui, or make full"
 
-# Local execution targets
-local-install:
-	pip install -r requirements.txt
+# Check if .env file exists and provide helpful message
+check-env:
+	@if [ ! -f .env ]; then \
+		echo "⚠️  Warning: .env file not found"; \
+		echo "   Copy .env.example to .env and configure your settings:"; \
+		echo "   cp .env.example .env"; \
+		echo ""; \
+	fi
 
-local-test:
-	pytest -m smoke -v
-
-local-full:
-	pytest -m "smoke or write" -v
-
-local-verbose:
-	pytest -m smoke -vv -s
-
-local-quick:
-	pytest -m quick -v
-
-local-critical:
-	pytest -m critical -v
-
-local-parallel:
-	pytest -m smoke -n 8 -v
-
-local-ui:
-	@echo "Running OAuth redirect tests first (no auth)..."
-	pytest -m oauth_redirect tests/ui/ -v
-	@echo "Running authenticated tests (requires credentials)..."
-	pytest -m authenticated tests/ui/ -v
-
-local-ui-oauth:
-	pytest -m oauth_redirect tests/ui/ -v
-
-local-ui-auth:
-	pytest -m authenticated tests/ui/ -v
-
-# Local discovery targets
-local-discover:
-	pytest --collect-only -v --color=yes
-
-local-markers:
-	pytest --markers --color=yes
-
-local-fixtures:
-	pytest --fixtures --color=yes
-
-# Docker targets (default)
+# Docker targets
 build:
 	docker build -t glueops-tests .
 
-test: build
-	@echo "Copying kubeconfig to workspace..."
+# Common setup targets
+setup-kubeconfig:
 	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
 	@chmod 600 ./kubeconfig
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "/workspaces/glueops:/workspaces/glueops:ro" \
-		-e KUBECONFIG=/kubeconfig \
-		-e CAPTAIN_DOMAIN="$${CAPTAIN_DOMAIN}" \
-		glueops-tests -m smoke -v
 
-full: build
-	@echo "Copying kubeconfig to workspace..."
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "/workspaces/glueops:/workspaces/glueops:ro" \
-		-e KUBECONFIG=/kubeconfig \
-		-e CAPTAIN_DOMAIN="$${CAPTAIN_DOMAIN}" \
-		glueops-tests -m "smoke or write" -v
+setup-reports:
+	@mkdir -p reports
 
-verbose: build
-	@echo "Copying kubeconfig to workspace..."
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "/workspaces/glueops:/workspaces/glueops:ro" \
-		-e KUBECONFIG=/kubeconfig \
-		-e CAPTAIN_DOMAIN="$${CAPTAIN_DOMAIN}" \
-		glueops-tests -m smoke -vv -s
-
-quick: build
-	@echo "Copying kubeconfig to workspace..."
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "/workspaces/glueops:/workspaces/glueops:ro" \
-		-e KUBECONFIG=/kubeconfig \
-		-e CAPTAIN_DOMAIN="$${CAPTAIN_DOMAIN}" \
-		glueops-tests -m quick -v
-
-critical: build
-	@echo "Copying kubeconfig to workspace..."
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "/workspaces/glueops:/workspaces/glueops:ro" \
-		-e KUBECONFIG=/kubeconfig \
-		-e CAPTAIN_DOMAIN="$${CAPTAIN_DOMAIN}" \
-		glueops-tests -m critical -v
-
-parallel: build
-	@echo "Copying kubeconfig to workspace..."
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "/workspaces/glueops:/workspaces/glueops:ro" \
-		-e KUBECONFIG=/kubeconfig \
-		-e CAPTAIN_DOMAIN="$${CAPTAIN_DOMAIN}" \
-		glueops-tests -m smoke -n 8 -v
-
-ui: build
-	@echo "Copying kubeconfig to workspace..."
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
+setup-ui-reports:
 	@mkdir -p reports/screenshots
-	@echo "Running OAuth redirect tests first (no auth)..."
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "$$(pwd)/reports:/app/reports" \
-		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m oauth_redirect tests/ui/ -v \
-		--html=reports/ui-oauth-report.html --self-contained-html
-	@echo "Running authenticated tests (requires credentials)..."
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "$$(pwd)/reports:/app/reports" \
-		-e KUBECONFIG=/kubeconfig \
-		-e GITHUB_USERNAME="$${GITHUB_USERNAME}" \
-		-e GITHUB_PASSWORD="$${GITHUB_PASSWORD}" \
-		-e GITHUB_OTP_SECRET="$${GITHUB_OTP_SECRET}" \
-		-e USE_BROWSERBASE="$${USE_BROWSERBASE}" \
-		glueops-tests -m authenticated tests/ui/ -v \
-		--html=reports/ui-auth-report.html --self-contained-html
 
-ui-oauth: build
-	@echo "Copying kubeconfig to workspace..."
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
-	@mkdir -p reports/screenshots
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "$$(pwd)/reports:/app/reports" \
+quick: check-env build setup-kubeconfig setup-reports
+	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
+		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		-e USE_BROWSERBASE="$${USE_BROWSERBASE}" \
-		glueops-tests -m oauth_redirect tests/ui/ -v \
-		--html=reports/ui-oauth-report.html --self-contained-html
+		glueops-tests -m quick -vv -s \
+		--html=reports/quick-report.html --self-contained-html \
+		--json-report --json-report-file=reports/quick-report.json
 
-ui-auth: build
-	@echo "Copying kubeconfig to workspace..."
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
-	@mkdir -p reports/screenshots
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "$$(pwd)/reports:/app/reports" \
+api: check-env build setup-kubeconfig setup-reports
+	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
+		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		-e CAPTAIN_DOMAIN="$${CAPTAIN_DOMAIN}" \
-		-e GITHUB_USERNAME="$${GITHUB_USERNAME}" \
-		-e GITHUB_PASSWORD="$${GITHUB_PASSWORD}" \
-		-e GITHUB_OTP_SECRET="$${GITHUB_OTP_SECRET}" \
-		-e USE_BROWSERBASE="$${USE_BROWSERBASE}" \
-		glueops-tests -m authenticated tests/ui/ -v \
-		--html=reports/ui-auth-report.html --self-contained-html
+		glueops-tests -m "smoke or write" -vv -s \
+		--html=reports/api-report.html --self-contained-html \
+		--json-report --json-report-file=reports/api-report.json
 
-# Reports
-report-html: build
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "$$(pwd)/reports:/app/reports" \
+ui: check-env build setup-kubeconfig setup-ui-reports
+	@echo "Running OAuth redirect tests..."
+	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
+		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m smoke --html=reports/report.html --self-contained-html
+		glueops-tests -m oauth_redirect tests/ui/ -vv -s \
+		--html=reports/ui-oauth-report.html --self-contained-html \
+		--json-report --json-report-file=reports/ui-oauth-report.json
+	@echo "Running authenticated tests..."
+	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
+		$(ENV_FILE_FLAG) \
+		-e KUBECONFIG=/kubeconfig \
+		glueops-tests -m authenticated tests/ui/ -vv -s \
+		--html=reports/ui-auth-report.html --self-contained-html \
+		--json-report --json-report-file=reports/ui-auth-report.json
 
-report-json: build
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
-	@chmod 600 ./kubeconfig
-	docker run --rm --network host \
-		-v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
-		-v "$$(pwd)/reports:/app/reports" \
+full: check-env build setup-kubeconfig setup-reports setup-ui-reports
+	@echo "Running API/K8s tests (smoke + write)..."
+	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
+		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m smoke --json-report --json-report-file=reports/report.json
+		glueops-tests -m "smoke or write" -vv -s \
+		--html=reports/full-api-report.html --self-contained-html \
+		--json-report --json-report-file=reports/full-api-report.json
+	@echo "Running UI OAuth redirect tests..."
+	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
+		$(ENV_FILE_FLAG) \
+		-e KUBECONFIG=/kubeconfig \
+		glueops-tests -m oauth_redirect tests/ui/ -vv -s \
+		--html=reports/full-ui-oauth-report.html --self-contained-html \
+		--json-report --json-report-file=reports/full-ui-oauth-report.json
+	@echo "Running UI authenticated tests..."
+	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
+		$(ENV_FILE_FLAG) \
+		-e KUBECONFIG=/kubeconfig \
+		glueops-tests -m authenticated tests/ui/ -vv -s \
+		--html=reports/full-ui-auth-report.html --self-contained-html \
+		--json-report --json-report-file=reports/full-ui-auth-report.json
+	@echo "✅ Full test suite complete! Check reports/ for results."
 
 # Cleanup
 clean:
@@ -246,15 +130,12 @@ results:
 	@echo "Press Ctrl+C to stop the server"
 	@cd reports && python3 -m http.server 8989
 
-# Discovery targets (Docker)
+# Discovery targets
 discover: build
-	docker run --rm -t \
-		glueops-tests --collect-only -v --color=yes
+	docker run --rm -t glueops-tests --collect-only -v --color=yes
 
 markers: build
-	docker run --rm -t \
-		glueops-tests --markers --color=yes
+	docker run --rm -t glueops-tests --markers --color=yes
 
 fixtures: build
-	docker run --rm -t \
-		glueops-tests --fixtures --color=yes
+	docker run --rm -t glueops-tests --fixtures --color=yes
