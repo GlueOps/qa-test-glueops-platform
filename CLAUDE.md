@@ -18,8 +18,10 @@ Automated testing suite for validating GlueOps Platform-as-a-Service deployments
 ### Directory Structure
 
 ```
-test-fun/
+qa-test-glueops-platform/
 ├── pytest.ini                    # Pytest configuration and markers
+├── CLAUDE.md                     # Main AI context document (this file)
+├── README.md                     # User-facing documentation
 ├── tests/
 │   ├── conftest.py              # Pytest fixtures (K8s clients, config)
 │   ├── smoke/                   # Smoke test suite
@@ -29,12 +31,19 @@ test-fun/
 │   │   ├── test_backups.py      # Backup CronJob validation
 │   │   └── test_vault.py        # Vault secret creation tests
 │   ├── integration/             # Integration tests (future)
-│   └── ui/                      # UI tests (future)
+│   └── ui/                      # UI tests (Playwright browser automation)
+│       ├── CLAUDE.md            # Detailed UI testing guide
+│       ├── conftest.py          # UI test fixtures (github_credentials, captain_domain)
+│       ├── helpers.py           # Browser connection, OAuth flow, screenshots
+│       ├── test_argocd_login_example.py   # ArgoCD applications page test
+│       ├── test_grafana_login_example.py  # Grafana dashboard test
+│       └── test_vault_login_example.py    # Vault secrets page test
 ├── lib/                          # Shared utilities
 │   ├── k8s_helpers.py           # Kubernetes helper functions
 │   └── port_forward.py          # Generic kubectl port-forward wrapper
 ├── baselines/                    # Prometheus metrics baselines (gitignored)
 ├── reports/                      # Test reports (gitignored)
+│   └── screenshots/             # UI test screenshots (gitignored)
 ├── Makefile                      # Build and run automation
 ├── Dockerfile                    # Container for CI/CD
 └── requirements.txt              # Python dependencies
@@ -50,6 +59,9 @@ Test execution using pytest with custom markers and fixtures:
 - `quick` / `slow` - Test duration categories
 - `critical` / `important` / `informational` - Test priority levels
 - `readonly` / `write` - Cluster modification indicators
+- `ui` - UI tests (browser automation)
+- `authenticated` - Tests requiring GitHub OAuth authentication
+- `oauth_redirect` - Tests involving OAuth redirects
 - Component markers: `argocd`, `workloads`, `vault`, `backup`, `observability`, `ingress`, `dns`, `oauth2`
 
 **Fixtures** (defined in `tests/conftest.py`):
@@ -109,6 +121,22 @@ def test_something(core_v1, platform_namespaces):
 - **Vault** (`tests/smoke/test_vault.py`): 
   - Creates test secrets (validates Vault access)
   - Extracts root token from terraform state
+- **UI Tests** (`tests/ui/`): Browser automation with Playwright
+  - ArgoCD login and applications page (`test_argocd_login_example.py`)
+  - Grafana login and dashboards (`test_grafana_login_example.py`)
+  - Vault login and secrets page (`test_vault_login_example.py`)
+  - **See [tests/ui/CLAUDE.md](tests/ui/CLAUDE.md) for detailed UI testing guide**
+  - Ingress OAuth2 redirect (validates OAuth2 annotations and HTTP redirects)
+  - Alertmanager firing alerts (whitelists: Watchdog)
+- **Observability** (`tests/smoke/test_observability.py`):
+  - Prometheus metrics baseline comparison (24-hour query window)
+  - Alertmanager status
+- **Backups** (`tests/smoke/test_backups.py`): 
+  - CronJob status validation
+  - Trigger backup jobs on-demand
+- **Vault** (`tests/smoke/test_vault.py`): 
+  - Creates test secrets (validates Vault access)
+  - Extracts root token from terraform state
 
 ## Usage
 
@@ -122,6 +150,11 @@ make critical  # Critical tests only
 make parallel  # Parallel execution (8 workers)
 make verbose   # Verbose output
 make build     # Build Docker image
+
+# UI tests (requires Chrome at localhost:9222)
+make ui        # All UI tests
+make ui-auth   # Authenticated UI tests (ArgoCD, Grafana, Vault)
+make ui-oauth  # OAuth redirect tests
 ```
 
 ### Local Execution
@@ -132,6 +165,10 @@ make local-test     # Smoke tests locally
 make local-full     # Full tests locally
 make local-quick    # Quick tests locally
 make local-parallel # Parallel execution locally
+
+# UI tests (requires Chrome at localhost:9222)
+pytest tests/ui/ -m authenticated -v  # Authenticated UI tests
+pytest tests/ui/ -m oauth_redirect -v # OAuth redirect tests
 ```
 
 ### Direct Pytest Usage
@@ -497,6 +534,11 @@ make report-json  # Creates reports/report.json
 
 ## Recent Improvements
 
+- **UI Testing Framework** - Playwright browser automation for ArgoCD, Grafana, and Vault
+- **OAuth Double-Click Pattern** - Discovered and implemented pattern for dex-based OAuth services
+- **Websocket Wait Strategy** - Proper handling of websocket-based apps (ArgoCD) with `wait_until="load"`
+- **Screenshot Volume Mounting** - Persistent screenshot storage via Docker volume mounts
+- **Centralized GitHub OAuth** - Reusable OAuth flow handler with OTP/2FA/passkeys support
 - **Decorator pattern** - Eliminated 30+ lines of boilerplate across tests
 - **Unified problem reporting** - Consistent error formatting
 - **Verbose logging** - Optional detailed output for debugging
@@ -518,6 +560,20 @@ See [PLAN.md](PLAN.md) for comprehensive roadmap including:
 
 ---
 
-**Last Updated**: December 24, 2025
-**Version**: 1.0.0
+**Last Updated**: December 25, 2025
+**Version**: 1.1.0
 **Maintainer**: GlueOps Platform Team
+
+## Documentation Structure
+
+This codebase uses category-specific AI context documents:
+
+- **[CLAUDE.md](CLAUDE.md)** (this file) - Main testing framework overview
+- **[tests/ui/CLAUDE.md](tests/ui/CLAUDE.md)** - Detailed UI testing guide with Playwright
+- **[README.md](README.md)** - User-facing quick start and usage guide
+
+**Why separate CLAUDE.md files?**
+- UI tests have fundamentally different patterns than API/K8s tests
+- Each category has unique setup requirements and debugging approaches  
+- Focused documentation makes it easier to find relevant information
+- Keeps main CLAUDE.md at manageable size while providing deep dives where needed

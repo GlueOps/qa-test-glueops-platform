@@ -8,3 +8,12 @@ baselines/*.json
 reports/*.html
 reports/*.json
 reports/*.xml
+reports/screenshots/*
+!reports/screenshots/.keep
+reports/logs/*
+!reports/logs/.keep
+test-results/
+*.png
+**.png
+*.webm
+**.webm

@@ -10,6 +10,9 @@ make test         # Run smoke tests (Docker)
 make full         # Run full tests (Docker)
 make local-test   # Run smoke tests locally
 make local-full   # Run full tests locally
+
+# UI tests (requires Chrome at localhost:9222)
+make ui-auth      # ArgoCD, Grafana, Vault login tests
 ```
 
 ## Test Types
@@ -30,6 +33,13 @@ make local-full   # Run full tests locally
 - Backup CronJob triggering and validation
 - Vault secret creation (10 test secrets)
 
+**UI Tests** - Tagged with `@pytest.mark.ui` and `@pytest.mark.authenticated`:
+- ArgoCD login and applications page
+- Grafana login and dashboards
+- Vault login and secrets page
+- Requires Chrome at `localhost:9222` for browser automation
+- **See [tests/ui/CLAUDE.md](tests/ui/CLAUDE.md) for detailed guide**
+
 ## Test Tags
 
 Tests are tagged with pytest markers for selective execution:
@@ -41,6 +51,9 @@ Tests are tagged with pytest markers for selective execution:
 - **`important`** - Important tests
 - **`readonly`** - Tests that don't modify cluster
 - **`write`** - Tests that create/modify resources
+- **`ui`** - UI tests (browser automation)
+- **`authenticated`** - Requires GitHub OAuth authentication
+- **`oauth_redirect`** - Involves OAuth redirects
 - **Component tags**: `argocd`, `workloads`, `vault`, `backup`, `observability`, `ingress`, `dns`, `oauth2`
 
 ## Usage
@@ -70,6 +83,11 @@ make verbose
 
 # Generate HTML report
 make report-html
+
+# UI tests (requires Chrome with debugging enabled)
+make ui           # All UI tests
+make ui-auth      # Authenticated tests (ArgoCD, Grafana, Vault)
+make ui-oauth     # OAuth redirect tests
 ```
 
 ### Local Execution
@@ -181,7 +199,7 @@ pytest --markers                      # Available markers
 pytest --fixtures                     # Available fixtures
 ```
 
-## Test Organization
+### Test Organization
 
 ### Smoke Tests (`tests/smoke/`)
 
@@ -193,6 +211,18 @@ pytest --fixtures                     # Available fixtures
 - [test_observability.py](tests/smoke/test_observability.py) - Prometheus metrics baseline (24hr window)
 - [test_backups.py](tests/smoke/test_backups.py) - Backup CronJob validation and triggering
 - [test_vault.py](tests/smoke/test_vault.py) - Vault secret creation tests
+
+### UI Tests (`tests/ui/`)
+
+- [test_argocd_login_example.py](tests/ui/test_argocd_login_example.py) - ArgoCD login via GitHub SSO
+- [test_grafana_login_example.py](tests/ui/test_grafana_login_example.py) - Grafana login via GitHub SSO
+- [test_vault_login_example.py](tests/ui/test_vault_login_example.py) - Vault login via GitHub SSO
+
+**Requirements for UI tests:**
+- Chrome browser running with remote debugging: `google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug`
+- Environment variables: `CAPTAIN_DOMAIN`, `GITHUB_USERNAME`, `GITHUB_PASSWORD`, `GITHUB_OTP_SECRET`
+
+See [tests/ui/CLAUDE.md](tests/ui/CLAUDE.md) for comprehensive UI testing guide.
 
 ### Test Categories (Markers)
 
@@ -248,6 +278,10 @@ rm baselines/*.json   # Manual cleanup
 - Kubernetes cluster access (k3d, EKS, GKE, etc.)
 - Valid kubeconfig at `~/.kube/config` or `$KUBECONFIG`
 - For Vault tests: Terraform state at `{captain_domain}/terraform/vault/configuration/terraform.tfstate`
+- For UI tests: 
+  - Chrome browser with remote debugging enabled (port 9222)
+  - GitHub credentials with 2FA/OTP configured
+  - Environment variables: `CAPTAIN_DOMAIN`, `GITHUB_USERNAME`, `GITHUB_PASSWORD`, `GITHUB_OTP_SECRET`
 
 ## Notes
 

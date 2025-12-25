@@ -2,6 +2,7 @@
 import pytest
 import os
 from kubernetes import client, config
+from pathlib import Path
 
 
 @pytest.fixture(scope="session")
@@ -40,6 +41,31 @@ def custom_api(k8s_config):
     return client.CustomObjectsApi()
 
 
+# pytest-html hook to attach screenshots
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Hook to add extra content to HTML report"""
+    outcome = yield
+    report = outcome.get_result()
+    
+    # Add screenshots to HTML report if they exist  
+    if report.when == 'call':
+        # Get screenshots from test if they were stored
+        screenshots = getattr(item, '_screenshots', [])
+        if screenshots:
+            try:
+                from pytest_html import extras
+                extra = getattr(report, 'extra', [])
+                for screenshot_path, description in screenshots:
+                    if Path(screenshot_path).exists():
+                        # Add as clickable link to the screenshot file
+                        rel_path = Path(screenshot_path).name
+                        extra.append(extras.html(f'<div><a href="screenshots/{rel_path}" target="_blank">{description}</a></div>'))
+                report.extra = extra
+            except Exception:
+                pass
+
+
 @pytest.fixture(scope="session")
 def captain_domain(request):
     """Captain domain from CLI, env var, or default"""
@@ -66,6 +92,39 @@ def platform_namespaces(core_v1, namespace_filter):
     """Get platform namespaces, optionally filtered"""
     from lib.k8s_helpers import get_platform_namespaces
     return get_platform_namespaces(core_v1, namespace_filter)
+
+
+@pytest.fixture(scope="session")
+def github_credentials():
+    """
+    GitHub credentials for UI tests.
+    
+    Reads from environment variables:
+    - GITHUB_USERNAME: GitHub username or email
+    - GITHUB_PASSWORD: GitHub password
+    - GITHUB_OTP_SECRET: TOTP secret for 2FA
+    
+    Returns:
+        dict: Credentials dictionary with keys: username, password, otp_secret
+    
+    Raises:
+        pytest.skip: If credentials are not configured
+    """
+    username = os.environ.get("GITHUB_USERNAME")
+    password = os.environ.get("GITHUB_PASSWORD")
+    otp_secret = os.environ.get("GITHUB_OTP_SECRET")
+    
+    if not username or not password or not otp_secret:
+        pytest.skip(
+            "GitHub credentials not configured. Set GITHUB_USERNAME, "
+            "GITHUB_PASSWORD, and GITHUB_OTP_SECRET environment variables."
+        )
+    
+    return {
+        "username": username,
+        "password": password,
+        "otp_secret": otp_secret
+    }
 
 
 def pytest_addoption(parser):
