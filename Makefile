@@ -1,4 +1,4 @@
-.PHONY: help test build clean clean-reports clean-baselines results discover markers fixtures \
+.PHONY: help test build clean clean-reports clean-baselines collect serve discover markers fixtures \
         check-env setup-kubeconfig setup-reports setup-ui-reports \
         quick api ui gitops full
 
@@ -14,6 +14,7 @@ ENV_FILE_FLAG = $(shell [ -f .env ] && echo "--env-file .env" || echo "")
 # Git metadata
 GIT_BRANCH = $$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'N/A')
 GIT_COMMIT = $$(git rev-parse --short HEAD 2>/dev/null || echo 'N/A')
+CAPTAIN_DOMAIN = $$(grep '^CAPTAIN_DOMAIN=' .env 2>/dev/null | cut -d'=' -f2 || echo 'N/A')
 
 # Timestamp for unique report names
 REPORT_TIMESTAMP = $$(date +%Y%m%d-%H%M%S)
@@ -30,15 +31,6 @@ ARGS ?= $(filter-out test,$(MAKECMDGOALS))
 PYTEST_COMMON_FLAGS = --screenshots=reports/screenshots \
                       --git-branch="$(GIT_BRANCH)" \
                       --git-commit="$(GIT_COMMIT)"
-
-# Report files (uses SUITE variable for naming)
-REPORT_FILES = --json-report=reports/$(SUITE)-$(REPORT_TIMESTAMP).json \
-               --html-output=reports/$(SUITE)-$(REPORT_TIMESTAMP)
-
-# Post-test metadata copy
-define COPY_METADATA
-	@if [ -f plus_metadata.json ]; then cp plus_metadata.json reports/; fi
-endef
 
 help:
 	@echo "GlueOps Test Suite (Pytest)"
@@ -61,8 +53,9 @@ help:
 	@echo ""
 	@echo ""
 	@echo "Reports:"
-	@echo "  make results           - Serve reports on http://localhost:8989"
-	@echo "  Note: All commands generate timestamped HTML and JSON reports in reports/"
+	@echo "  make serve             - Collect and serve reports on http://localhost:8989"
+	@echo "  make collect           - Move test reports to reports/ directory"
+	@echo "  Note: All commands generate timestamped HTML and JSON reports"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make build         - Build Docker image"
@@ -104,16 +97,25 @@ setup-ui-reports:
 
 test: check-env build setup-kubeconfig setup-reports
 	@echo "Running tests with SUITE=$(SUITE)$(if $(MARKER), MARKER=$(MARKER))$(if $(RERUNS), RERUNS=$(RERUNS))..."
+	@TIMESTAMP=$$(date -u +%Y%m%d-%H%M%S); \
 	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -vv \
-		$(if $(MARKER),-m $(MARKER)) \
-		$(if $(RERUNS),--reruns $(RERUNS) --reruns-delay 5) \
-		$(ARGS) \
-		$(REPORT_FILES) $(PYTEST_COMMON_FLAGS)
-	$(COPY_METADATA)
-	@echo "✅ Tests complete! Report: reports/$(SUITE)-$(REPORT_TIMESTAMP).html"
+		-e TZ=UTC \
+		--entrypoint sh \
+		glueops-tests -c "\
+			pytest -vv \
+				--environment \"$(CAPTAIN_DOMAIN)\" \
+				$(if $(MARKER),-m $(MARKER)) \
+				$(if $(RERUNS),--reruns $(RERUNS) --reruns-delay 5) \
+				$(ARGS) \
+				--json-report=reports-$(SUITE)-$${TIMESTAMP}.json --html-output=reports-$(SUITE)-$${TIMESTAMP} $(PYTEST_COMMON_FLAGS); \
+			EXIT=\$$?; \
+			if [ -f plus_metadata.json ] && [ -d reports-$(SUITE)-$${TIMESTAMP} ]; then \
+				cp plus_metadata.json reports-$(SUITE)-$${TIMESTAMP}/; \
+			fi; \
+			exit \$$EXIT"; \
+	echo "✅ Tests complete! Report: reports-$(SUITE)-$${TIMESTAMP}/report.html"
 
 # Convenience aliases (shortcuts to common test patterns)
 quick:
@@ -143,9 +145,19 @@ clean-reports:
 clean-baselines:
 	rm -f baselines/*.json
 
+# Collect test reports from workspace root to reports/ directory
+collect:
+	@echo "Collecting test reports to reports/ directory..."
+	@if ls reports-* 1> /dev/null 2>&1; then \
+		sudo mv reports-* reports/ 2>/dev/null && echo "✅ Reports moved to reports/"; \
+	else \
+		echo "No reports to collect"; \
+	fi
+
 # Serve test reports and screenshots on port 8989
-results:
+serve: collect
 	@echo "Starting web server for test reports..."
+	@lsof -ti:8989 | xargs kill -9 2>/dev/null || true
 	@echo "Access reports at: http://localhost:8989/"
 	@echo "Press Ctrl+C to stop the server"
 	@cd reports && python3 -m http.server 8989

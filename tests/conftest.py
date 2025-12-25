@@ -290,6 +290,18 @@ def ephemeral_github_repo():
 def pytest_addoption(parser):
     """Add custom command-line options"""
     parser.addoption(
+        "--environment",
+        action="store",
+        default=None,
+        help="Test environment (e.g., prod, staging)",
+    )
+    parser.addoption(
+        "--env",
+        action="store",
+        default=None,
+        help="Test environment (shorthand)",
+    )
+    parser.addoption(
         "--captain-domain",
         action="store",
         default=None,
