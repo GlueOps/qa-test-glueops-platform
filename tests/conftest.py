@@ -55,13 +55,13 @@ def pytest_runtest_makereport(item, call):
         if screenshots:
             try:
                 from pytest_html import extras
-                extra = getattr(report, 'extra', [])
+                extra = getattr(report, 'extras', [])
                 for screenshot_path, description in screenshots:
                     if Path(screenshot_path).exists():
                         # Add as clickable link to the screenshot file
                         rel_path = Path(screenshot_path).name
                         extra.append(extras.html(f'<div><a href="screenshots/{rel_path}" target="_blank">{description}</a></div>'))
-                report.extra = extra
+                report.extras = extra
             except Exception:
                 pass
 

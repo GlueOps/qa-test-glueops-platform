@@ -13,4 +13,4 @@ pytest-timeout>=2.1.0      # Timeout handling
 # UI Testing
 playwright>=1.40.0
 pyotp>=2.9.0               # TOTP 2FA for GitHub login
-browserbase>=0.3.0         # BrowserBase remote browser support
+# Note: BrowserBase uses REST API (via requests) - no SDK needed

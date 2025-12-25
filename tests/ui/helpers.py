@@ -21,19 +21,42 @@ def get_browser_connection():
     p = sync_playwright().start()
     
     if use_browserbase:
-        log.info("Using BrowserBase remote browser...")
-        from browserbase import Browserbase
-        bb = Browserbase(api_key=os.environ["BROWSERBASE_API_KEY"])
-        session = bb.sessions.create(project_id=os.environ["BROWSERBASE_PROJECT_ID"])
-        browser = p.chromium.connect_over_cdp(session.connect_url)
-        
-        log.info("🎥 BrowserBase Session Created!")
-        log.info(f"   Session ID: {session.id}")
-        log.info(f"   View recording: https://www.browserbase.com/sessions/{session.id}")
-        if hasattr(session, 'debug_url'):
-            log.info(f"   Debug URL: {session.debug_url}")
-        
-        return p, browser, session
+        try:
+            log.info("Using BrowserBase remote browser...")
+            import requests
+            
+            api_key = os.environ["BROWSERBASE_API_KEY"]
+            project_id = os.environ["BROWSERBASE_PROJECT_ID"]
+            
+            # Create session via REST API (sync)
+            response = requests.post(
+                "https://www.browserbase.com/v1/sessions",
+                headers={
+                    "x-bb-api-key": api_key,
+                    "Content-Type": "application/json"
+                },
+                json={"projectId": project_id}
+            )
+            response.raise_for_status()
+            session_data = response.json()
+            
+            session_id = session_data["id"]
+            connect_url = f"wss://connect.browserbase.com?apiKey={api_key}&sessionId={session_id}"
+            
+            browser = p.chromium.connect_over_cdp(connect_url)
+            
+            log.info("🎥 BrowserBase Session Created!")
+            log.info(f"   Session ID: {session_id}")
+            log.info(f"   View recording: https://www.browserbase.com/sessions/{session_id}")
+            
+            return p, browser, session_id
+        except Exception as e:
+            # Clean up playwright instance if session creation fails
+            try:
+                p.stop()
+            except:
+                pass
+            raise
     else:
         log.info("Using local Chrome at localhost:9222...")
         browser = p.chromium.connect_over_cdp("http://localhost:9222")
@@ -180,14 +203,12 @@ def log_browserbase_session(session):
     Log BrowserBase session information at the end of a test.
     
     Args:
-        session: BrowserBase session object or None
+        session: BrowserBase session ID (string) or None
     """
     if session:
         log.info("🎥 BrowserBase Session Recording:")
-        log.info(f"   View session at: https://www.browserbase.com/sessions/{session.id}")
-        log.info(f"   Session ID: {session.id}")
-        if hasattr(session, 'debug_url'):
-            log.info(f"   Debug URL: {session.debug_url}")
+        log.info(f"   View session at: https://www.browserbase.com/sessions/{session}")
+        log.info(f"   Session ID: {session}")
 
 
 def cleanup_browser(playwright, page: Page, context: BrowserContext, session):
