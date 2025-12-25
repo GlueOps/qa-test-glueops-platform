@@ -65,66 +65,28 @@ def get_browser_connection():
 
 def create_incognito_context(browser: Browser) -> BrowserContext:
     """
-    Get the default browser context when connected via CDP.
+    Create a fresh incognito browser context for complete isolation.
     
-    When connecting to Chrome via CDP (localhost:9222), we use the existing
-    browser context instead of creating a new one to avoid opening new windows
-    which have viewport/sizing issues.
+    Creates a new context for each test to ensure no cookies, storage,
+    or session data carries over between tests.
     
     Args:
         browser: Playwright browser instance
         
     Returns:
-        BrowserContext: Default browser context
+        BrowserContext: Fresh isolated browser context
     """
-    log.info("Using default browser context (connected via CDP)...")
-    # When connected via CDP, use the default context (first existing context)
-    # This avoids creating new windows
-    contexts = browser.contexts
-    if contexts:
-        context = contexts[0]
-        
-        # Close any existing pages to start fresh
-        for page in context.pages:
-            try:
-                log.info(f"Closing existing page: {page.url}")
-                page.close()
-            except:
-                pass
-        
-        # Clear browser storage and cookies to ensure clean state between tests
-        try:
-            log.info("Clearing browser storage and cookies...")
-            # Clear ALL cookies first
-            context.clear_cookies()
-            
-            # Don't close existing pages - they will be reused or ignored
-            # Just navigate them to about:blank to clear state
-            for existing_page in list(context.pages):
-                try:
-                    existing_page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
-                except Exception:
-                    pass
-            
-            # Create a temporary page to clear storage
-            temp_page = context.new_page()
-            try:
-                temp_page.evaluate("() => { localStorage.clear(); sessionStorage.clear(); }")
-            except:
-                pass
-            temp_page.close()
-            
-            # Clear cookies again for good measure
-            context.clear_cookies()
-            log.info("✅ Cookies and storage cleared")
-        except Exception as e:
-            log.warning(f"Could not clear storage: {e}")
-        
-        return context
-    else:
-        # Fallback: create new context if none exist (shouldn't happen with CDP)
-        log.warning("No existing context found, creating new one...")
-        return browser.new_context()
+    log.info("Creating fresh incognito context for test isolation...")
+    
+    # Create a completely fresh context with no persistence
+    context = browser.new_context(
+        ignore_https_errors=False,
+        accept_downloads=False,
+        user_agent=None  # Use default
+    )
+    
+    log.info("✅ Fresh context created - no cookies or session data")
+    return context
 
 
 def create_new_page(context: BrowserContext) -> Page:
@@ -176,23 +138,57 @@ def verify_github_oauth_redirect(page: Page, url: str, attach_screenshot_fn, tim
     Returns:
         bool: True if redirected to GitHub login
     """
+    # Extract domain and clear any existing cookies for this domain
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    domain = parsed.netloc
+    
+    # Clear cookies for the target domain and oauth2 domain to ensure fresh auth check
+    try:
+        log.info(f"Clearing cookies for {domain} and oauth2 domains...")
+        context = page.context
+        all_cookies = context.cookies()
+        
+        # Delete cookies that match the domain or oauth2 domain
+        for cookie in all_cookies:
+            cookie_domain = cookie.get('domain', '')
+            if domain in cookie_domain or 'oauth2' in cookie_domain:
+                log.info(f"  Deleting cookie: {cookie['name']} for domain {cookie_domain}")
+        
+        # Clear all cookies to be safe
+        context.clear_cookies()
+        log.info("✅ Cookies cleared before navigation")
+    except Exception as e:
+        log.warning(f"Could not clear cookies: {e}")
+    
     log.info(f"Navigating to {url}...")
     page.goto(url, wait_until="load", timeout=timeout)
     
-    # Wait a moment for redirect
-    page.wait_for_timeout(2000)
+    # Wait for OAuth redirect chain to complete (oauth2-proxy -> github)
+    # Check multiple times as redirects can take a moment
+    max_attempts = 10
+    for attempt in range(max_attempts):
+        current_url = page.url
+        log.info(f"Attempt {attempt + 1}/{max_attempts} - Current URL: {current_url}")
+        
+        # Check if we're at GitHub login or oauth2-proxy
+        if "github.com/login" in current_url:
+            log.info("✅ Successfully redirected to GitHub OAuth login")
+            take_screenshot(page, f"GitHub OAuth - {url.split('//')[-1].split('/')[0]}", attach_screenshot_fn)
+            return True
+        elif "oauth2" in current_url and "/oauth2/start" in current_url:
+            log.info("📍 At oauth2-proxy, waiting for GitHub redirect...")
+            page.wait_for_timeout(1000)
+        else:
+            # Wait a bit and check again
+            page.wait_for_timeout(500)
     
-    current_url = page.url
-    log.info(f"Current URL after navigation: {current_url}")
+    # Final check
+    final_url = page.url
+    is_github = "github.com/login" in final_url
     
-    # Check if we're at GitHub login
-    is_github = "github.com/login" in current_url
-    
-    if is_github:
-        log.info("✅ Successfully redirected to GitHub OAuth login")
-        take_screenshot(page, f"GitHub OAuth - {url.split('//')[-1].split('/')[0]}", attach_screenshot_fn)
-    else:
-        log.warning(f"❌ Did not redirect to GitHub login. Current URL: {current_url}")
+    if not is_github:
+        log.warning(f"❌ Did not redirect to GitHub login after {max_attempts} attempts. Final URL: {final_url}")
         take_screenshot(page, f"Not GitHub - {url.split('//')[-1].split('/')[0]}", attach_screenshot_fn)
     
     return is_github
