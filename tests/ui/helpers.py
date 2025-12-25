@@ -129,6 +129,9 @@ def verify_github_oauth_redirect(page: Page, url: str, attach_screenshot_fn, tim
     """
     Navigate to a URL and verify it redirects to GitHub OAuth login.
     
+    Each test gets a fresh browser context with no cookies or session data,
+    so no explicit cookie clearing is needed before navigation.
+    
     Args:
         page: Playwright page instance
         url: URL to navigate to
@@ -138,29 +141,6 @@ def verify_github_oauth_redirect(page: Page, url: str, attach_screenshot_fn, tim
     Returns:
         bool: True if redirected to GitHub login
     """
-    # Extract domain and clear any existing cookies for this domain
-    from urllib.parse import urlparse
-    parsed = urlparse(url)
-    domain = parsed.netloc
-    
-    # Clear cookies for the target domain and oauth2 domain to ensure fresh auth check
-    try:
-        log.info(f"Clearing cookies for {domain} and oauth2 domains...")
-        context = page.context
-        all_cookies = context.cookies()
-        
-        # Delete cookies that match the domain or oauth2 domain
-        for cookie in all_cookies:
-            cookie_domain = cookie.get('domain', '')
-            if domain in cookie_domain or 'oauth2' in cookie_domain:
-                log.info(f"  Deleting cookie: {cookie['name']} for domain {cookie_domain}")
-        
-        # Clear all cookies to be safe
-        context.clear_cookies()
-        log.info("✅ Cookies cleared before navigation")
-    except Exception as e:
-        log.warning(f"Could not clear cookies: {e}")
-    
     log.info(f"Navigating to {url}...")
     page.goto(url, wait_until="load", timeout=timeout)
     

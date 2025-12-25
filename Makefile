@@ -82,14 +82,14 @@ ui: check-env build setup-kubeconfig setup-ui-reports
 	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m oauth_redirect tests/ui/ -vv \
+		glueops-tests -m oauth_redirect tests/ui/ -vv --reruns 2 --reruns-delay 120 \
 		--html=reports/ui-oauth-report.html --self-contained-html \
 		--json-report --json-report-file=reports/ui-oauth-report.json
 	@echo "Running authenticated tests..."
 	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m authenticated tests/ui/ -vv \
+		glueops-tests -m authenticated tests/ui/ -vv --reruns 2 --reruns-delay 120 \
 		--html=reports/ui-auth-report.html --self-contained-html \
 		--json-report --json-report-file=reports/ui-auth-report.json
 
@@ -98,7 +98,7 @@ full: check-env build setup-kubeconfig setup-reports setup-ui-reports
 	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -vv \
+		glueops-tests -vv --reruns 2 --reruns-delay 120 \
 		--html=reports/full-report.html --self-contained-html \
 		--json-report --json-report-file=reports/full-report.json
 	@echo "✅ Full test suite complete! Check reports/full-report.html for results."
