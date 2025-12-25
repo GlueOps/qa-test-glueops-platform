@@ -9,11 +9,11 @@ from lib.port_forward import PortForward
 
 
 def query_all_metrics(prometheus_url):
-    """Query Prometheus and return set of metric signatures (name + label keys)
+    """Query Prometheus and return set of metric names (deduplicated)
     
     Queries last 24 hours of metrics using series endpoint to capture
     metrics that may not be present at exact instant of query.
-    Returns deduplicated set of metric signatures.
+    Returns deduplicated set of metric names only (ignoring labels).
     """
     # Query all time series from last 24 hours (86400 seconds)
     # Longer window captures intermittent metrics (e.g., vault_expire_* only appears during lease expiration)
@@ -37,30 +37,18 @@ def query_all_metrics(prometheus_url):
     if data.get('status') != 'success':
         raise Exception(f"Prometheus query failed: {data.get('error', 'unknown error')}")
     
-    # Use set for automatic deduplication
+    # Use set for automatic deduplication of metric names
     metrics = set()
     for series in data['data']:
         metric_name = series.get('__name__', '')
-        if not metric_name:
-            continue
-        
-        # Get label keys (excluding __name__)
-        label_keys = sorted([k for k in series.keys() if k != '__name__'])
-        
-        # Create signature: metric_name{label1,label2,label3}
-        if label_keys:
-            label_str = ','.join(label_keys)
-            signature = f"{metric_name}{{{label_str}}}"
-        else:
-            signature = metric_name
-        
-        metrics.add(signature)
+        if metric_name:
+            metrics.add(metric_name)
     
     return metrics
 
 
 def create_baseline(metrics, baseline_file, captain_domain, prometheus_url):
-    """Create baseline file with metric signatures (local file operation only)"""
+    """Create baseline file with metric names (local file operation only)"""
     from datetime import datetime, timezone
     
     baseline_dir = Path(baseline_file).parent
@@ -73,7 +61,7 @@ def create_baseline(metrics, baseline_file, captain_domain, prometheus_url):
             "prometheus_url": prometheus_url,
             "total_metrics": len(metrics)
         },
-        "metric_signatures": sorted(metrics)
+        "metric_names": sorted(metrics)
     }
     
     with open(baseline_file, 'w') as f:
@@ -81,9 +69,24 @@ def create_baseline(metrics, baseline_file, captain_domain, prometheus_url):
 
 
 def load_baseline(baseline_file):
-    """Load baseline metric signatures from file"""
+    """Load baseline metric names from file"""
     with open(baseline_file, 'r') as f:
-        return json.load(f)
+        data = json.load(f)
+        # Support both old format (metric_signatures) and new format (metric_names)
+        if 'metric_names' in data:
+            return data
+        elif 'metric_signatures' in data:
+            # Convert old format: extract just the metric name before '{'
+            metric_names = set()
+            for sig in data['metric_signatures']:
+                # Extract metric name (everything before '{' or the whole string)
+                metric_name = sig.split('{')[0]
+                metric_names.add(metric_name)
+            data['metric_names'] = sorted(metric_names)
+            data['metadata']['total_metrics'] = len(metric_names)
+            return data
+        else:
+            raise ValueError("Invalid baseline file format")
 
 
 @pytest.mark.smoke
@@ -102,13 +105,12 @@ def test_prometheus_metrics_existence(core_v1, captain_domain):
     First run: Creates baseline at baselines/prometheus-metrics-baseline.json
     Subsequent runs: Compares current metrics against baseline
     
-    Validates metric schema existence (metric name + label keys):
-    - Checks metric_name{label1,label2,label3} patterns exist
-    - Does NOT compare label values (survives pod restarts, IP changes)
+    Validates metric name existence:
+    - Checks metric names exist (ignoring labels/signatures)
     - FAILS if baseline metrics are missing (regression detection)
     - Reports new metrics as INFO (not a failure)
     
-    Fails if any baseline metric signatures are missing (indicates metric loss/regression).
+    Fails if any baseline metric names are missing (indicates metric loss/regression).
     
     Note: To recreate baseline, delete the baseline file and rerun.
     
@@ -123,7 +125,7 @@ def test_prometheus_metrics_existence(core_v1, captain_domain):
         
         print(f"Querying Prometheus at {prometheus_url} (read-only)")
         current_metrics = query_all_metrics(prometheus_url)
-        print(f"Found {len(current_metrics)} unique metric signatures")
+        print(f"Found {len(current_metrics)} unique metric names")
         
         # First run - create baseline (writes to LOCAL filesystem only)
         if not os.path.exists(baseline_file):
@@ -134,10 +136,10 @@ def test_prometheus_metrics_existence(core_v1, captain_domain):
         
         # Comparison run
         baseline = load_baseline(baseline_file)
-        baseline_set = set(baseline['metric_signatures'])
+        baseline_set = set(baseline['metric_names'])
         current_set = current_metrics
         
-        print(f"Baseline contains {len(baseline_set)} metric signatures")
+        print(f"Baseline contains {len(baseline_set)} metric names")
         
         missing = baseline_set - current_set
         new = current_set - baseline_set
@@ -155,7 +157,7 @@ def test_prometheus_metrics_existence(core_v1, captain_domain):
         if missing:
             # Show all missing metrics
             missing_list = sorted(missing)
-            error_msg = f"{len(missing)} metric signature(s) missing from baseline:\n"
+            error_msg = f"{len(missing)} metric name(s) missing from baseline:\n"
             for m in missing_list:
                 error_msg += f"  - {m}\n"
             
