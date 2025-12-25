@@ -64,7 +64,7 @@ quick: check-env build setup-kubeconfig setup-reports
 	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m quick -vv -s \
+		glueops-tests -m quick -vv \
 		--html=reports/quick-report.html --self-contained-html \
 		--json-report --json-report-file=reports/quick-report.json
 
@@ -72,7 +72,7 @@ api: check-env build setup-kubeconfig setup-reports
 	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m "smoke or write" -vv -s \
+		glueops-tests -m "smoke or write" -vv \
 		--html=reports/api-report.html --self-contained-html \
 		--json-report --json-report-file=reports/api-report.json
 
@@ -81,14 +81,14 @@ ui: check-env build setup-kubeconfig setup-ui-reports
 	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m oauth_redirect tests/ui/ -vv -s \
+		glueops-tests -m oauth_redirect tests/ui/ -vv \
 		--html=reports/ui-oauth-report.html --self-contained-html \
 		--json-report --json-report-file=reports/ui-oauth-report.json
 	@echo "Running authenticated tests..."
 	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m authenticated tests/ui/ -vv -s \
+		glueops-tests -m authenticated tests/ui/ -vv \
 		--html=reports/ui-auth-report.html --self-contained-html \
 		--json-report --json-report-file=reports/ui-auth-report.json
 
@@ -97,21 +97,21 @@ full: check-env build setup-kubeconfig setup-reports setup-ui-reports
 	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m "smoke or write" -vv -s \
+		glueops-tests -m "smoke or write" -vv \
 		--html=reports/full-api-report.html --self-contained-html \
 		--json-report --json-report-file=reports/full-api-report.json
 	@echo "Running UI OAuth redirect tests..."
 	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m oauth_redirect tests/ui/ -vv -s \
+		glueops-tests -m oauth_redirect tests/ui/ -vv \
 		--html=reports/full-ui-oauth-report.html --self-contained-html \
 		--json-report --json-report-file=reports/full-ui-oauth-report.json
 	@echo "Running UI authenticated tests..."
 	$(DOCKER_RUN) $(DOCKER_VOLUMES_UI) \
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
-		glueops-tests -m authenticated tests/ui/ -vv -s \
+		glueops-tests -m authenticated tests/ui/ -vv \
 		--html=reports/full-ui-auth-report.html --self-contained-html \
 		--json-report --json-report-file=reports/full-ui-auth-report.json
 	@echo "✅ Full test suite complete! Check reports/ for results."
