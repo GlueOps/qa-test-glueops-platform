@@ -7,6 +7,7 @@ Uses sslip.io for automatic DNS resolution without managing DNS records.
 import pytest
 from pathlib import Path
 import sys
+import os
 import uuid
 import logging
 from lib.k8s_assertions import (
@@ -34,7 +35,7 @@ def test_letsencrypt_http01_challenge(ephemeral_github_repo, custom_api, core_v1
     
     This test:
     1. Gets the ingress load balancer IP from the cluster
-    2. Generates sslip.io hostnames that resolve to the LB IP automatically
+    2. Generates hostnames using wildcard DNS service that resolve to the LB IP automatically
     3. Creates applications with cert-manager annotations for LetsEncrypt
     4. Waits for certificates to be issued (up to 10 minutes)
     5. Validates Certificate resources are Ready
@@ -42,9 +43,9 @@ def test_letsencrypt_http01_challenge(ephemeral_github_repo, custom_api, core_v1
     7. Validates HTTPS endpoints work with valid LetsEncrypt certificates
     8. Validates certificate details (issuer, expiration, SANs)
     
-    The test creates 2 applications with unique sslip.io hostnames:
-    - letsencrypt-test-{guid1}-{lb-ip}.sslip.io
-    - letsencrypt-test-{guid2}-{lb-ip}.sslip.io
+    The test creates 2 applications with unique hostnames:
+    - letsencrypt-test-{guid1}-{lb-ip}.{wildcard_dns_service}
+    - letsencrypt-test-{guid2}-{lb-ip}.{wildcard_dns_service}
     
     Each application is validated to ensure:
     - ArgoCD reports it as Healthy and Synced
@@ -77,7 +78,9 @@ def test_letsencrypt_http01_challenge(ephemeral_github_repo, custom_api, core_v1
     assert lb_ip is not None, "Could not find load balancer IP for ingressClassName 'public'"
     
     lb_ip_dashed = lb_ip.replace(".", "-")
-    logger.info(f"✓ sslip.io format: {lb_ip_dashed}")
+    wildcard_dns_service = os.getenv('WILDCARD_DNS_SERVICE')
+    logger.info(f"✓ Wildcard DNS service: {wildcard_dns_service}")
+    logger.info(f"✓ Hostname format: <name>-{lb_ip_dashed}.{wildcard_dns_service}")
     
     # Create applications with LetsEncrypt certificates
     print_section_header("STEP 3: Creating Applications with LetsEncrypt")
@@ -126,7 +129,7 @@ podDisruptionBudget:
         # Generate a short random GUID
         random_guid = str(uuid.uuid4())[:8]
         app_name = f"letsencrypt-test-{random_guid}"
-        hostname = f"{app_name}-{lb_ip_dashed}.sslip.io"
+        hostname = f"{app_name}-{lb_ip_dashed}.{wildcard_dns_service}"
         
         app_info.append({
             'name': app_name,
@@ -243,7 +246,7 @@ podDisruptionBudget:
     print_section_header("FINAL SUMMARY")
     
     logger.info(f"\n✅ SUCCESS: LetsEncrypt HTTP01 challenge test completed!")
-    logger.info(f"   ✓ Created {len(app_info)} applications with sslip.io hostnames")
+    logger.info(f"   ✓ Created {len(app_info)} applications with {wildcard_dns_service} hostnames")
     logger.info(f"   ✓ All ArgoCD applications Healthy and Synced")
     logger.info(f"   ✓ All pods healthy")
     logger.info(f"   ✓ All {len(app_info)} LetsEncrypt certificates issued")
