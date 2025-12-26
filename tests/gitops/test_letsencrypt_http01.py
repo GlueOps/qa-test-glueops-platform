@@ -109,9 +109,9 @@ ingress:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt
   tls:
-    - secretName: {app_name}-tls
+    - secretName: {app_name}
       hosts:
-          - {hostname}
+        - {hostname}
 podDisruptionBudget:
   enabled: false
 """
@@ -133,7 +133,7 @@ podDisruptionBudget:
             'hostname': hostname,
             'url': f"https://{hostname}",
             'cert_name': app_name,
-            'secret_name': f"{app_name}-tls"
+            'secret_name': f"{app_name}"
         })
         
         file_path = f"apps/{app_name}/envs/prod/values.yaml"
@@ -143,7 +143,7 @@ podDisruptionBudget:
         logger.info(f"      GUID: {random_guid}")
         logger.info(f"      Hostname: {hostname}")
         logger.info(f"      Certificate: {app_name}")
-        logger.info(f"      TLS Secret: {app_name}-tls")
+        logger.info(f"      TLS Secret: {app_name}")
         
         create_github_file(
             repo=repo,
