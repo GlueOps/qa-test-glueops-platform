@@ -21,7 +21,7 @@ def test_cluster_info_github_oauth_redirect(page, captain_domain, request):
     - Uses incognito browser context
     - Navigates to cluster-info
     - Verifies redirect to https://github.com/login
-    - Screenshots automatically captured on failure by pytest-html-plus
+    - Screenshots captured manually using ScreenshotManager
     - Supports BrowserBase and local Chrome
     """
     # Navigate to cluster-info

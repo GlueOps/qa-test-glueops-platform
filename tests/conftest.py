@@ -44,34 +44,79 @@ def custom_api(k8s_config):
     return client.CustomObjectsApi()
 
 
-# pytest-html/pytest-reporter-plus hook to attach screenshots and extras
+# pytest-html hook to attach screenshots and extras
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """Hook to add extra content to HTML report"""
+    """Hook to add extra content to HTML report and auto-capture screenshots"""
     outcome = yield
     report = outcome.get_result()
     
-    # Add test description (docstring) to the report
+    # Auto-capture screenshot for UI tests (always, regardless of pass/fail)
+    if report.when == 'call' and hasattr(item, 'funcargs') and 'page' in item.funcargs:
+        try:
+            page = item.funcargs['page']
+            # Generate screenshot filename
+            test_name = item.nodeid.replace('::', '_').replace('/', '_')
+            timestamp = time.strftime('%Y%m%d-%H%M%S')
+            status = 'PASSED' if report.passed else 'FAILED' if report.failed else 'SKIPPED'
+            
+            # Get screenshots directory from config or use default
+            screenshots_dir = Path('reports/screenshots')
+            if hasattr(item.config, 'option') and hasattr(item.config.option, 'htmlpath'):
+                html_path = Path(item.config.option.htmlpath)
+                screenshots_dir = html_path.parent / 'screenshots'
+            screenshots_dir.mkdir(parents=True, exist_ok=True)
+            
+            screenshot_filename = f"{test_name}_FINAL_{status}_{timestamp}.png"
+            screenshot_path = screenshots_dir / screenshot_filename
+            
+            # Capture screenshot
+            page.screenshot(path=str(screenshot_path))
+            
+            # APPEND to existing screenshots (don't overwrite!)
+            if not hasattr(item, '_screenshots'):
+                item._screenshots = []
+            item._screenshots.append((str(screenshot_path), f"Final Screenshot: {status}"))
+        except Exception as e:
+            # Silently ignore screenshot errors to not break tests
+            pass
+    
+    # Add test description (docstring) and screenshots to the report
     if report.when == 'call':
         try:
-            # Works with both pytest-html and pytest-reporter-plus
+            from pytest_html import extras
             extra = getattr(report, 'extras', [])
             
             # Add docstring as description if it exists
             if item.obj.__doc__:
                 docstring = item.obj.__doc__.strip()
-                try:
-                    from pytest_html import extras
-                    extra.append(extras.html(f'<div style="margin: 10px 0; padding: 10px; background-color: #f5f5f5; border-left: 3px solid #2196F3;"><strong>Description:</strong><br>{docstring}</div>'))
-                except ImportError:
-                    pass
-            
-            # pytest-html-plus automatically captures and embeds screenshots from the screenshots/ directory
-            # Screenshots are found by test name matching and automatically linked in the HTML report
-            # No manual attachment needed - the framework handles it via find_screenshot_and_copy()
-            
+                extra.append(extras.html(f'<div style="margin: 10px 0; padding: 10px; background-color: #f5f5f5; border-left: 3px solid #2196F3;"><strong>Description:</strong><br>{docstring}</div>'))
+                
+            # Add screenshots to HTML report if they exist  
+            screenshots = getattr(item, '_screenshots', [])
+            if screenshots:
+                extra.append(extras.html(f'<div style="margin: 15px 0 5px 0;"><strong>📸 Screenshots ({len(screenshots)}):</strong></div>'))
+                for screenshot_path, description in screenshots:
+                    screenshot_path_obj = Path(screenshot_path)
+                    if screenshot_path_obj.exists():
+                        # Use relative path from HTML report to screenshot
+                        rel_path = f"screenshots/{screenshot_path_obj.name}"
+                        
+                        # Clean link with icon and styling
+                        extra.append(extras.html(f'''
+                            <div style="margin: 5px 0; padding: 8px 12px; background-color: #fff; border: 1px solid #e0e0e0; border-radius: 4px; display: inline-block;">
+                                <a href="{rel_path}" target="_blank" style="text-decoration: none; color: #0066cc; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 16px;">🖼️</span>
+                                    <span style="font-weight: 500;">{description}</span>
+                                    <span style="color: #999; font-size: 11px;">↗</span>
+                                </a>
+                            </div>
+                        '''))
+                        
             report.extras = extra
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Error adding extras to report: {e}")
             pass
 
 
@@ -335,6 +380,14 @@ def pytest_addoption(parser):
     )
 
 
+
+
+
+def pytest_html_report_title(report):
+    """Set HTML report title"""
+    report.title = "GlueOps Platform Test Suite"
+
+
 def pytest_configure(config):
     """Configure pytest with custom settings"""
     # Register custom markers
@@ -345,18 +398,18 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "oauth_redirect: OAuth redirect flow tests")
     config.addinivalue_line("markers", "authenticated: Authenticated UI tests")
     
+    # Set HTML report metadata
+    config._metadata = {
+        'Project': 'GlueOps Platform Test Suite',
+        'Environment': os.getenv('CAPTAIN_DOMAIN', 'QA Environment'),
+        'Tester': os.getenv('USER', 'CI/CD Pipeline'),
+        'Branch': os.getenv('GIT_BRANCH', 'N/A'),
+        'Commit': os.getenv('GIT_COMMIT', 'N/A'),
+        'Python version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    }
+    
     # Terminal reporter customization
     config.option.verbose = max(config.option.verbose, 1)
-
-
-def pytest_metadata(metadata):
-    """Add custom metadata to the HTML report"""
-    metadata['Project'] = 'GlueOps Platform Test Suite'
-    metadata['Environment'] = os.getenv('CAPTAIN_DOMAIN', 'QA Environment')
-    metadata['Tester'] = os.getenv('USER', 'CI/CD Pipeline')
-    metadata['Branch'] = os.getenv('GIT_BRANCH', 'N/A')
-    metadata['Commit'] = os.getenv('GIT_COMMIT', 'N/A')
-    metadata['Python version'] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 
 def pytest_collection_modifyitems(config, items):

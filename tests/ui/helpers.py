@@ -499,7 +499,7 @@ class ScreenshotManager:
     Centralized screenshot management for UI tests.
     
     Handles screenshot capture with UUID7 filenames, relative path tracking,
-    and summary generation for pytest-html-plus reports.
+    and summary generation for pytest-html reports.
     
     Example usage:
         manager = ScreenshotManager(request=request)
@@ -519,9 +519,12 @@ class ScreenshotManager:
         if screenshots_dir is None:
             # Try to auto-detect from pytest config
             if request and hasattr(request, 'config'):
-                html_output = request.config.getoption("--html-output", default=None)
-                if html_output:
-                    screenshots_dir = f"{html_output}/screenshots"
+                # pytest-html uses --html option (not --html-output)
+                html_path = request.config.getoption("--html", default=None)
+                if html_path:
+                    # Extract directory from HTML path (e.g., reports-ui-20251226/report.html -> reports-ui-20251226/screenshots)
+                    from pathlib import Path
+                    screenshots_dir = str(Path(html_path).parent / "screenshots")
                 else:
                     screenshots_dir = "reports/screenshots"
             else:
@@ -529,6 +532,7 @@ class ScreenshotManager:
         self.screenshots_dir = Path(screenshots_dir)
         self.test_name = test_name or "test"
         self.screenshots: List[Tuple[str, str, str]] = []  # [(filename, url, description)]
+        self.request = request  # Store request to attach screenshots to pytest item
         
         # Ensure directory exists
         self.screenshots_dir.mkdir(parents=True, exist_ok=True)
@@ -567,6 +571,12 @@ class ScreenshotManager:
         self.screenshots.append((screenshot_filename, url, desc))
         log.info(f"✅ Screenshot saved: {screenshot_filename}")
         
+        # Also attach to pytest item for HTML report
+        if self.request and hasattr(self.request, 'node'):
+            if not hasattr(self.request.node, '_screenshots'):
+                self.request.node._screenshots = []
+            self.request.node._screenshots.append((str(screenshot_path), desc))
+        
         return screenshot_path.absolute()
     
     def get_relative_path(self, filename: str) -> str:
@@ -587,7 +597,7 @@ class ScreenshotManager:
         
         Outputs two sections:
         1. Plain text summary for terminal/logs
-        2. HTML summary with clickable links for pytest-html-plus report
+        2. HTML summary with clickable links for pytest-html report
         """
         if not self.screenshots:
             log.info("No screenshots captured")
@@ -600,15 +610,7 @@ class ScreenshotManager:
         for i, (filename, url, desc) in enumerate(self.screenshots, 1):
             log.info(f"{i:2d}. {filename:50s} -> {url}")
         log.info("="*80)
-        
-        # HTML summary with clickable links
-        log.info("\n" + "="*80)
-        log.info("📸 CLICKABLE SCREENSHOT LINKS (HTML):")
-        log.info("="*80)
-        for i, (filename, url, desc) in enumerate(self.screenshots, 1):
-            rel_path = self.get_relative_path(filename)
-            log.info(f"{i:2d}. <a href='{rel_path}' target='_blank'>{filename}</a> -> {url}")
-        log.info("="*80)
+
     
     def get_screenshot_count(self) -> int:
         """Get total number of screenshots captured."""

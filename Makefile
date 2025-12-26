@@ -27,10 +27,8 @@ SUITE ?= test
 # Capture test paths/args (exclude known make targets)
 ARGS ?= $(filter-out test,$(MAKECMDGOALS))
 
-# Common pytest flags (screenshots dir set dynamically per test run)
-PYTEST_COMMON_FLAGS = --capture-screenshots=all \
-                      --git-branch="$(GIT_BRANCH)" \
-                      --git-commit="$(GIT_COMMIT)"
+# Common pytest flags
+PYTEST_COMMON_FLAGS =
 
 help:
 	@echo "GlueOps Test Suite (Pytest)"
@@ -102,22 +100,20 @@ test: check-env build setup-kubeconfig setup-reports
 		$(ENV_FILE_FLAG) \
 		-e KUBECONFIG=/kubeconfig \
 		-e TZ=UTC \
+		-e GIT_BRANCH="$(GIT_BRANCH)" \
+		-e GIT_COMMIT="$(GIT_COMMIT)" \
 		--entrypoint sh \
 		glueops-tests -c "\
+			mkdir -p reports-$(SUITE)-$${TIMESTAMP}/screenshots; \
 			pytest -vv \
 				--environment \"$(CAPTAIN_DOMAIN)\" \
 				$(if $(MARKER),-m $(MARKER)) \
 				$(if $(RERUNS),--reruns $(RERUNS) --reruns-delay 5) \
 				$(ARGS) \
-				--json-report=reports-$(SUITE)-$${TIMESTAMP}.json \
-				--html-output=reports-$(SUITE)-$${TIMESTAMP} \
-				--screenshots=reports-$(SUITE)-$${TIMESTAMP}/screenshots \
-				$(PYTEST_COMMON_FLAGS); \
-			EXIT=\$$?; \
-			if [ -f plus_metadata.json ] && [ -d reports-$(SUITE)-$${TIMESTAMP} ]; then \
-				cp plus_metadata.json reports-$(SUITE)-$${TIMESTAMP}/; \
-			fi; \
-			exit \$$EXIT"; \
+				--json-report-file=reports-$(SUITE)-$${TIMESTAMP}.json \
+				--html=reports-$(SUITE)-$${TIMESTAMP}/report.html \
+				--self-contained-html \
+				$(PYTEST_COMMON_FLAGS)"; \
 	echo "✅ Tests complete! Report: reports-$(SUITE)-$${TIMESTAMP}/report.html"
 
 # Convenience aliases (shortcuts to common test patterns)

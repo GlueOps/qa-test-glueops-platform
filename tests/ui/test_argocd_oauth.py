@@ -12,7 +12,7 @@ def test_argocd_github_oauth_redirect(page, captain_domain, request):
     - Uses incognito browser context
     - Navigates to ArgoCD
     - Verifies redirect to https://github.com/login
-    - Screenshots automatically captured on failure by pytest-html-plus
+    - Screenshots captured manually using ScreenshotManager
     - Supports BrowserBase and local Chrome
     """
     # Navigate to ArgoCD

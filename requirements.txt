@@ -6,10 +6,10 @@ requests==2.32.3
 # Pytest dependencies
 pytest==9.0.2
 pytest-xdist==3.8.0        # Parallel execution
+pytest-html==4.1.1         # HTML reports
+pytest-json-report==1.5.0  # JSON reports for CI/CD
 pytest-timeout==2.4.0      # Timeout handling
 pytest-rerunfailures==16.1 # Automatic retry for flaky tests
-pytest-html-plus           # Enhanced pytest reports (renamed from pytest-reporter-plus)
-pytest-metadata            # Metadata plugin for pytest reports
 
 # UI Testing
 playwright==1.57.0
