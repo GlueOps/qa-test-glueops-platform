@@ -27,9 +27,8 @@ SUITE ?= test
 # Capture test paths/args (exclude known make targets)
 ARGS ?= $(filter-out test,$(MAKECMDGOALS))
 
-# Common pytest flags
-PYTEST_COMMON_FLAGS = --screenshots=reports/screenshots \
-                      --capture-screenshots=all \
+# Common pytest flags (screenshots dir set dynamically per test run)
+PYTEST_COMMON_FLAGS = --capture-screenshots=all \
                       --git-branch="$(GIT_BRANCH)" \
                       --git-commit="$(GIT_COMMIT)"
 
@@ -110,7 +109,10 @@ test: check-env build setup-kubeconfig setup-reports
 				$(if $(MARKER),-m $(MARKER)) \
 				$(if $(RERUNS),--reruns $(RERUNS) --reruns-delay 5) \
 				$(ARGS) \
-				--json-report=reports-$(SUITE)-$${TIMESTAMP}.json --html-output=reports-$(SUITE)-$${TIMESTAMP} $(PYTEST_COMMON_FLAGS); \
+				--json-report=reports-$(SUITE)-$${TIMESTAMP}.json \
+				--html-output=reports-$(SUITE)-$${TIMESTAMP} \
+				--screenshots=reports-$(SUITE)-$${TIMESTAMP}/screenshots \
+				$(PYTEST_COMMON_FLAGS); \
 			EXIT=\$$?; \
 			if [ -f plus_metadata.json ] && [ -d reports-$(SUITE)-$${TIMESTAMP} ]; then \
 				cp plus_metadata.json reports-$(SUITE)-$${TIMESTAMP}/; \
@@ -157,11 +159,15 @@ collect:
 
 # Serve test reports and screenshots on port 8989
 serve: collect
-	@echo "Starting web server for test reports..."
-	@lsof -ti:8989 | xargs kill -9 2>/dev/null || true
+	@echo "Starting nginx web server for test reports..."
+	@docker stop glueops-reports 2>/dev/null || true
 	@echo "Access reports at: http://localhost:8989/"
-	@echo "Press Ctrl+C to stop the server"
-	@cd reports && python3 -m http.server 8989
+	@docker run --rm --name glueops-reports \
+		-v "$$(pwd)/reports:/usr/share/nginx/html:ro" \
+		-p 8989:80 \
+		nginx:alpine \
+		sh -c "echo 'server { listen 80; location / { root /usr/share/nginx/html; autoindex on; } }' > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+	@echo "Server stopped"
 
 # Discovery targets
 discover: build

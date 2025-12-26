@@ -622,5 +622,3 @@ class ScreenshotManager:
             List of tuples: [(filename, url, description), ...]
         """
         return self.screenshots.copy()
-
-        return False
