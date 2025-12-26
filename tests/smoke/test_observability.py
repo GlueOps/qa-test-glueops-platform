@@ -5,7 +5,10 @@ import os
 import time
 from pathlib import Path
 import requests
+import logging
 from lib.port_forward import PortForward
+
+logger = logging.getLogger(__name__)
 
 
 def query_all_metrics(prometheus_url):
@@ -123,15 +126,15 @@ def test_prometheus_metrics_existence(core_v1, captain_domain):
     with PortForward("glueops-core-kube-prometheus-stack", "kps-prometheus", 9090) as pf:
         prometheus_url = f"http://127.0.0.1:{pf.local_port}"
         
-        print(f"Querying Prometheus at {prometheus_url} (read-only)")
+        logger.info(f"Querying Prometheus at {prometheus_url} (read-only)")
         current_metrics = query_all_metrics(prometheus_url)
-        print(f"Found {len(current_metrics)} unique metric names")
+        logger.info(f"Found {len(current_metrics)} unique metric names")
         
         # First run - create baseline (writes to LOCAL filesystem only)
         if not os.path.exists(baseline_file):
             create_baseline(current_metrics, baseline_file, captain_domain, prometheus_url)
-            print(f"✓ Baseline created: {len(current_metrics)} metrics")
-            print(f"  Baseline saved to {baseline_file}")
+            logger.info(f"✓ Baseline created: {len(current_metrics)} metrics")
+            logger.info(f"  Baseline saved to {baseline_file}")
             pytest.skip(f"Baseline created with {len(current_metrics)} metrics (rerun to compare)")
         
         # Comparison run
@@ -139,19 +142,19 @@ def test_prometheus_metrics_existence(core_v1, captain_domain):
         baseline_set = set(baseline['metric_names'])
         current_set = current_metrics
         
-        print(f"Baseline contains {len(baseline_set)} metric names")
+        logger.info(f"Baseline contains {len(baseline_set)} metric names")
         
         missing = baseline_set - current_set
         new = current_set - baseline_set
         
         # Report new metrics (informational)
         if new:
-            print(f"\nNew metrics detected ({len(new)} total):")
+            logger.info(f"\nNew metrics detected ({len(new)} total):")
             # Show first 10 new metrics
             for metric in sorted(new)[:10]:
-                print(f"  + {metric}")
+                logger.info(f"  + {metric}")
             if len(new) > 10:
-                print(f"  ... and {len(new) - 10} more")
+                logger.info(f"  ... and {len(new) - 10} more")
         
         # Assert no missing metrics
         if missing:
@@ -163,5 +166,5 @@ def test_prometheus_metrics_existence(core_v1, captain_domain):
             
             pytest.fail(error_msg)
         
-        print(f"✓ All {len(baseline_set)} baseline metrics verified" + 
+        logger.info(f"✓ All {len(baseline_set)} baseline metrics verified" + 
               (f" ({len(new)} new metrics detected)" if new else ""))

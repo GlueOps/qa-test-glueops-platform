@@ -2,9 +2,12 @@
 import pytest
 import subprocess
 import time
+import logging
 from datetime import datetime, timezone
 from kubernetes.client.rest import ApiException
-from lib.k8s_helpers import wait_for_job_completion, validate_pod_execution
+from lib.k8s_utils import wait_for_job_completion, validate_pod_execution
+
+logger = logging.getLogger(__name__)
 
 
 def create_vault_backup_test_secret(captain_domain, vault_namespace="glueops-core-vault", verbose=False):
@@ -28,20 +31,20 @@ def create_vault_backup_test_secret(captain_domain, vault_namespace="glueops-cor
         from tests.smoke.test_vault import get_vault_client, cleanup_vault_client
     except ImportError:
         if verbose:
-            print("  ⚠ Skipping Vault secret creation (vault module not available)")
+            logger.info("  ⚠ Skipping Vault secret creation (vault module not available)")
         return False
     
     try:
         import hvac
     except ImportError:
         if verbose:
-            print("  ⚠ Skipping Vault secret creation (hvac library not installed)")
+            logger.info("  ⚠ Skipping Vault secret creation (hvac library not installed)")
         return False
     
     client = None
     try:
         if verbose:
-            print(f"  Creating test secret in Vault...")
+            logger.info(f"  Creating test secret in Vault...")
         
         client = get_vault_client(captain_domain, vault_namespace=vault_namespace)
         
@@ -58,15 +61,15 @@ def create_vault_backup_test_secret(captain_domain, vault_namespace="glueops-cor
         )
         
         if verbose:
-            print(f"  ✓ Created secret: {secret_path}")
-            print(f"    Value: {utc_time}")
+            logger.info(f"  ✓ Created secret: {secret_path}")
+            logger.info(f"    Value: {utc_time}")
         
         cleanup_vault_client(client)
         return True
         
     except Exception as e:
         if verbose:
-            print(f"  ⚠ Failed to create Vault secret: {e}")
+            logger.info(f"  ⚠ Failed to create Vault secret: {e}")
         if client:
             cleanup_vault_client(client)
         return False
@@ -130,9 +133,9 @@ def test_backup_cronjobs_status(core_v1, batch_v1):
             problems.append(f"{cj_name}: job failed")
         elif recent_job.status.succeeded:
             # Check execution quality
-            issues = validate_pod_execution(core_v1, recent_job.metadata.name, backup_namespace)
-            if issues:
-                problems.append(f"{cj_name}: {', '.join(issues)}")
+            success, message = validate_pod_execution(core_v1, recent_job.metadata.name, backup_namespace)
+            if not success:
+                problems.append(f"{cj_name}: {message}")
     
     assert not problems, (
         f"{len(problems)} backup CronJob issue(s) (total: {len(cronjobs.items)} jobs):\n" +
@@ -191,13 +194,13 @@ def test_backup_cronjobs_trigger(core_v1, batch_v1, captain_domain, request):
         if result.returncode == 0:
             triggered_jobs.append({"name": job_name, "cronjob": cj_name})
             if verbose:
-                print(f"  Triggered: {job_name}")
+                logger.info(f"  Triggered: {job_name}")
         else:
             problems.append(f"{cj_name}: {result.stderr.strip()}")
     
     # Wait for triggered jobs
     if triggered_jobs and verbose:
-        print(f"  Waiting for {len(triggered_jobs)} job(s)...")
+        logger.info(f"  Waiting for {len(triggered_jobs)} job(s)...")
     
     for job_info in triggered_jobs:
         status = wait_for_job_completion(batch_v1, job_info["name"], backup_namespace, timeout)

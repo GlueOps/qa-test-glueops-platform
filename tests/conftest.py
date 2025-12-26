@@ -6,6 +6,56 @@ from kubernetes import client, config
 from pathlib import Path
 from github import Github, GithubException
 import time
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def ensure_clean_github_repo(g, dest_owner, repo_name, template_repo, description="Ephemeral test repository"):
+    """
+    Ensure a clean GitHub repository by deleting if exists and creating fresh from template.
+    
+    Args:
+        g: Github client instance
+        dest_owner: Destination organization or user object
+        repo_name: Name of the repository to create
+        template_repo: Template repository object to create from
+        description: Repository description (optional)
+    
+    Returns:
+        github.Repository.Repository: The newly created repository
+        
+    Raises:
+        pytest.fail: If deletion or creation fails
+    """
+    # Step 1: Delete repository if it exists
+    try:
+        existing_repo = dest_owner.get_repo(repo_name)
+        logger.info(f"🗑️  Deleting existing repository: {repo_name}")
+        existing_repo.delete()
+        time.sleep(2)  # Give GitHub API time to process deletion
+        logger.info(f"✓ Repository deleted successfully")
+    except GithubException as e:
+        if e.status == 404:
+            # Repository doesn't exist, which is fine
+            logger.info(f"Repository {repo_name} does not exist (will create fresh)")
+        else:
+            pytest.fail(f"Failed to delete existing repository '{repo_name}': {e.status} {e.data.get('message', str(e))}")
+    
+    # Step 2: Create fresh repository from template
+    logger.info(f"📦 Creating fresh repository '{repo_name}' from template '{template_repo.full_name}'")
+    try:
+        new_repo = dest_owner.create_repo_from_template(
+            name=repo_name,
+            repo=template_repo,
+            description=description,
+            private=False
+        )
+        time.sleep(3)  # Wait for repository to be fully created
+        logger.info(f"✓ Repository created successfully: {new_repo.html_url}")
+        return new_repo
+    except GithubException as e:
+        pytest.fail(f"Failed to create repository from template: {e}")
 
 
 @pytest.fixture(scope="session")
@@ -159,7 +209,7 @@ def namespace_filter(request):
 @pytest.fixture(scope="session")
 def platform_namespaces(core_v1, namespace_filter):
     """Get platform namespaces, optionally filtered"""
-    from lib.k8s_helpers import get_platform_namespaces
+    from lib.k8s_utils import get_platform_namespaces
     return get_platform_namespaces(core_v1, namespace_filter)
 
 
@@ -304,41 +354,25 @@ def ephemeral_github_repo():
     except GithubException as e:
         pytest.skip(f"Failed to get template repository '{template_repo_name}': {e}")
     
-    # Safety cleanup: Delete test repo if it already exists
-    try:
-        existing_repo = dest_owner.get_repo(test_repo_name)
-        print(f"Deleting existing test repository: {test_repo_name}")
-        existing_repo.delete()
-        time.sleep(2)  # Give GitHub API time to process deletion
-    except GithubException as e:
-        # Only continue if repo doesn't exist (404)
-        # Other errors (like 403 permission denied) should fail
-        if e.status == 404:
-            # Repository doesn't exist, which is fine
-            pass
-        else:
-            pytest.fail(f"Failed to delete existing repository '{test_repo_name}': {e.status} {e.data.get('message', str(e))}")
-    
-    # Create new repository from template
-    print(f"Creating test repository '{dest_org}/{test_repo_name}' from template '{template_repo_name}'")
-    try:
-        test_repo = dest_owner.create_repo_from_template(
-            name=test_repo_name,
-            repo=template_repo,
-            description=f"Ephemeral test repository created from {template_repo_name}",
-            private=False
-        )
-        # Wait for repository to be fully created
-        time.sleep(3)
-    except GithubException as e:
-        pytest.fail(f"Failed to create repository from template: {e}")
+    # Ensure clean repository: delete if exists, create fresh from template
+    logger.info("\n" + "="*70)
+    logger.info("SETUP: Ensuring clean deployment-configurations repository")
+    logger.info("="*70)
+    test_repo = ensure_clean_github_repo(
+        g=g,
+        dest_owner=dest_owner,
+        repo_name=test_repo_name,
+        template_repo=template_repo,
+        description=f"Ephemeral test repository created from {template_repo_name}"
+    )
+    logger.info("="*70 + "\n")
     
     # If target_tag is specified, get the commit SHA from the template repo
     # We'll use this for reference but won't attempt to update the new repo
     tag_commit_sha = None
     if target_tag:
         try:
-            print(f"Fetching commit SHA for tag '{target_tag}' from template repo")
+            logger.info(f"Fetching commit SHA for tag '{target_tag}' from template repo")
             # Get the tag reference from the TEMPLATE repo
             tag_ref = template_repo.get_git_ref(f"tags/{target_tag}")
             tag_sha = tag_ref.object.sha
@@ -350,21 +384,31 @@ def ephemeral_github_repo():
             else:
                 tag_commit_sha = tag_sha
             
-            print(f"Template tag '{target_tag}' points to commit: {tag_commit_sha}")
-            print(f"Note: New repo uses template's HEAD. Tag commit is for reference only.")
+            logger.info(f"Template tag '{target_tag}' points to commit: {tag_commit_sha}")
+            logger.info(f"Note: New repo uses template's HEAD. Tag commit is for reference only.")
         except GithubException as e:
-            print(f"⚠ Warning: Could not fetch tag '{target_tag}': {e.status} - {e.data.get('message', str(e))}")
-            print(f"  Continuing with template's HEAD commit")
+            logger.info(f"⚠ Warning: Could not fetch tag '{target_tag}': {e.status} - {e.data.get('message', str(e))}")
+            logger.info(f"  Continuing with template's HEAD commit")
     
     # Yield the repository for test use
     yield test_repo
     
-    # Teardown: Delete the test repository
+    # Teardown: Reset repository to clean state (delete and recreate)
+    logger.info("\n" + "="*70)
+    logger.info("TEARDOWN: Resetting deployment-configurations repository")
+    logger.info("="*70)
     try:
-        print(f"Cleaning up: Deleting test repository '{test_repo_name}'")
-        test_repo.delete()
-    except GithubException as e:
-        print(f"Warning: Failed to delete test repository during cleanup: {e}")
+        ensure_clean_github_repo(
+            g=g,
+            dest_owner=dest_owner,
+            repo_name=test_repo_name,
+            template_repo=template_repo,
+            description=f"Ephemeral test repository created from {template_repo_name}"
+        )
+        logger.info("✓ Repository reset complete - ready for next test run")
+    except Exception as e:
+        logger.warning(f"⚠ Warning: Failed to reset repository during cleanup: {e}")
+    logger.info("="*70 + "\n")
 
 
 def pytest_addoption(parser):

@@ -1,5 +1,9 @@
 """ArgoCD Application health checks"""
 import pytest
+import logging
+from lib.k8s_validators import validate_all_argocd_apps
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.smoke
@@ -23,37 +27,21 @@ def test_argocd_applications(custom_api, namespace_filter, capsys):
     
     Cluster Impact: READ-ONLY (queries ArgoCD Application CRDs)
     """
-    apps = custom_api.list_cluster_custom_object(
-        group="argoproj.io",
-        version="v1alpha1",
-        plural="applications"
-    )
+    logger.info("\n" + "="*70)
+    logger.info("ARGOCD APPLICATION HEALTH CHECK")
+    logger.info("="*70)
     
-    # Filter by namespace if specified
-    if namespace_filter:
-        apps['items'] = [app for app in apps['items'] 
-                       if app['metadata'].get('namespace') == namespace_filter]
+    problems = validate_all_argocd_apps(custom_api, namespace_filter, verbose=True)
     
-    # Fail if no applications found
-    assert apps['items'], "No ArgoCD applications found in cluster"
-    
-    print(f"Checking {len(apps['items'])} ArgoCD applications")
-    
-    problems = []
-    for app in apps['items']:
-        name = app['metadata']['name']
-        namespace = app['metadata'].get('namespace', 'default')
-        health = app.get('status', {}).get('health', {}).get('status', 'Unknown')
-        sync = app.get('status', {}).get('sync', {}).get('status', 'Unknown')
-        
-        if health != 'Healthy' or sync != 'Synced':
-            problems.append(f"{namespace}/{name} (health: {health}, sync: {sync})")
-        else:
-            print(f"  ✓ {namespace}/{name}: {health}/{sync}")
+    logger.info("\n" + "="*70)
+    logger.info("SUMMARY")
+    logger.info("="*70)
     
     # Assert no problems found
     if problems:
-        error_msg = f"{len(problems)} ArgoCD application(s) unhealthy or out of sync:\n"
+        error_msg = f"❌ {len(problems)} ArgoCD application(s) unhealthy or out of sync:\n"
         for p in problems:
             error_msg += f"  - {p}\n"
         pytest.fail(error_msg)
+    
+    logger.info(f"✅ All ArgoCD applications are Healthy and Synced\n")

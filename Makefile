@@ -102,6 +102,7 @@ test: check-env build setup-kubeconfig setup-reports
 		-e TZ=UTC \
 		-e GIT_BRANCH="$(GIT_BRANCH)" \
 		-e GIT_COMMIT="$(GIT_COMMIT)" \
+		-e PYTHONUNBUFFERED=1 \
 		--entrypoint sh \
 		glueops-tests -c "\
 			mkdir -p reports-$(SUITE)-$${TIMESTAMP}/screenshots; \
@@ -128,6 +129,9 @@ ui:
 
 gitops:
 	@$(MAKE) test MARKER=gitops RERUNS=2 SUITE=gitops
+
+letsencrypt:
+	@$(MAKE) test MARKER=letsencrypt RERUNS=1 SUITE=letsencrypt
 
 full:
 	@$(MAKE) test RERUNS=2 SUITE=full

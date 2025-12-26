@@ -1,8 +1,16 @@
 """Kubernetes workload health checks"""
 import pytest
-import dns.resolver
+import logging
 import requests
 from lib.port_forward import PortForward
+from lib.k8s_validators import (
+    validate_pod_health,
+    validate_failed_jobs,
+    validate_ingress_configuration,
+    validate_ingress_dns
+)
+
+logger = logging.getLogger(__name__)
 
 
 # Alerts that are expected to be firing and don't indicate issues
@@ -30,50 +38,21 @@ def test_pod_health(core_v1, platform_namespaces):
     
     Cluster Impact: READ-ONLY (queries pod status)
     """
-    problems = []
+    logger.info("\n" + "="*70)
+    logger.info("POD HEALTH CHECK")
+    logger.info("="*70)
     
-    for namespace in platform_namespaces:
-        pods = core_v1.list_namespaced_pod(namespace=namespace)
-        print(f"Checking {len(pods.items)} pods in {namespace}")
-        
-        for pod in pods.items:
-            name = f"{namespace}/{pod.metadata.name}"
-            
-            # Skip pods from completed Jobs (they're expected to be Failed/Succeeded)
-            is_job_pod = False
-            if pod.metadata.owner_references:
-                for owner in pod.metadata.owner_references:
-                    if owner.kind == "Job":
-                        is_job_pod = True
-                        break
-            
-            if is_job_pod:
-                continue
-            
-            # Check pod phase
-            if pod.status.phase in ["Failed", "Unknown"]:
-                problems.append(f"{name}: phase={pod.status.phase}")
-                continue
-            
-            # Check container statuses
-            if pod.status.container_statuses:
-                for container in pod.status.container_statuses:
-                    # Waiting state issues
-                    if container.state.waiting:
-                        reason = container.state.waiting.reason
-                        if reason in ["CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull"]:
-                            problems.append(f"{name}/{container.name}: {reason}")
-                    
-                    # OOMKilled
-                    if container.last_state.terminated:
-                        if container.last_state.terminated.reason == "OOMKilled":
-                            problems.append(f"{name}/{container.name}: OOMKilled")
-                    
-                    # High restart count
-                    if container.restart_count > 5:
-                        problems.append(f"{name}/{container.name}: {container.restart_count} restarts")
+    problems = validate_pod_health(core_v1, platform_namespaces, verbose=True)
     
-    assert not problems, f"{len(problems)} pod issue(s) found:\n" + "\n".join(f"  - {p}" for p in problems)
+    logger.info("\n" + "="*70)
+    logger.info("SUMMARY")
+    logger.info("="*70)
+    
+    if problems:
+        logger.info(f"❌ {len(problems)} pod issue(s) found\n")
+        pytest.fail(f"{len(problems)} pod issue(s) found:\n" + "\n".join(f"  - {p}" for p in problems))
+    
+    logger.info(f"✅ All pods are healthy\n")
 
 
 @pytest.mark.quick
@@ -92,47 +71,29 @@ def test_failed_jobs(batch_v1, platform_namespaces):
     
     Cluster Impact: READ-ONLY (queries job status)
     """
+    logger.info("\n" + "="*70)
+    logger.info("FAILED JOBS CHECK")
+    logger.info("="*70)
+    
     exclude_jobs = []  # No exclusions - all failed jobs should be caught
     
-    problems = []
-    warnings = []
+    problems, warnings = validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs, verbose=True)
     
-    for namespace in platform_namespaces:
-        jobs = batch_v1.list_namespaced_job(namespace=namespace)
-        for job in jobs.items:
-            if job.status.failed and job.status.failed > 0:
-                # If job eventually succeeded, it's fine (retries are expected)
-                if job.status.succeeded and job.status.succeeded > 0:
-                    continue
-                
-                job_full_name = f"{namespace}/{job.metadata.name}"
-                job_desc = f"{job_full_name} ({job.status.failed}x failed)"
-                
-                # Check if job matches exclusion pattern
-                excluded = False
-                for pattern in exclude_jobs:
-                    if '*' in pattern:
-                        # Simple wildcard matching
-                        prefix = pattern.split('*')[0]
-                        if job.metadata.name.startswith(prefix):
-                            excluded = True
-                            break
-                    elif pattern == job.metadata.name or pattern == job_full_name:
-                        excluded = True
-                        break
-                
-                if excluded:
-                    warnings.append(job_desc)
-                else:
-                    problems.append(job_desc)
+    logger.info("\n" + "="*70)
+    logger.info("SUMMARY")
+    logger.info("="*70)
     
     # Report warnings if any
     if warnings:
-        print("Excluded jobs with failures (warnings only):")
+        logger.info("Excluded jobs with failures (warnings only):")
         for warning in warnings:
-            print(f"  {warning}")
+            logger.info(f"  {warning}")
     
-    assert not problems, f"{len(problems)} failed job(s) found:\n" + "\n".join(f"  - {p}" for p in problems)
+    if problems:
+        logger.info(f"❌ {len(problems)} failed job(s) found\n")
+        pytest.fail(f"{len(problems)} failed job(s) found:\n" + "\n".join(f"  - {p}" for p in problems))
+    
+    logger.info(f"✅ No failed jobs found\n")
 
 
 @pytest.mark.quick
@@ -151,70 +112,24 @@ def test_ingress_validity(networking_v1, platform_namespaces):
     
     Cluster Impact: READ-ONLY (queries ingress resources)
     """
-    problems = []
-    total_ingresses = 0
+    logger.info("\n" + "="*70)
+    logger.info("INGRESS VALIDITY CHECK")
+    logger.info("="*70)
     
-    for namespace in platform_namespaces:
-        ingresses = networking_v1.list_namespaced_ingress(namespace=namespace)
-        
-        for ingress in ingresses.items:
-            total_ingresses += 1
-            name = f"{namespace}/{ingress.metadata.name}"
-            
-            # Get hosts and LB for verbose logging
-            hosts = []
-            lb_addrs = []
-            if ingress.spec and ingress.spec.rules:
-                hosts = [r.host for r in ingress.spec.rules if r.host]
-            if ingress.status and ingress.status.load_balancer and ingress.status.load_balancer.ingress:
-                for lb in ingress.status.load_balancer.ingress:
-                    if lb.ip:
-                        lb_addrs.append(lb.ip)
-                    elif lb.hostname:
-                        lb_addrs.append(lb.hostname)
-            
-            print(f"{name}: {', '.join(hosts) if hosts else 'no hosts'} → {', '.join(lb_addrs) if lb_addrs else 'no LB'}")
-            
-            # Check if spec exists
-            if not ingress.spec:
-                problems.append(f"{name}: missing spec")
-                continue
-            
-            # Check if rules exist
-            if not ingress.spec.rules:
-                problems.append(f"{name}: no rules defined")
-                continue
-            
-            # Check each rule has a host
-            empty_hosts = []
-            for i, rule in enumerate(ingress.spec.rules):
-                if not rule.host or rule.host.strip() == "":
-                    empty_hosts.append(f"rule[{i}]")
-            
-            if empty_hosts:
-                problems.append(f"{name}: empty hosts in {', '.join(empty_hosts)}")
-            
-            # Check if ingress has a load balancer address
-            if ingress.status and ingress.status.load_balancer:
-                lb_ingress = ingress.status.load_balancer.ingress
-                if not lb_ingress or len(lb_ingress) == 0:
-                    problems.append(f"{name}: no load balancer address")
-                else:
-                    # Check if address/IP is populated
-                    has_address = False
-                    for lb in lb_ingress:
-                        if (lb.ip and lb.ip.strip()) or (lb.hostname and lb.hostname.strip()):
-                            has_address = True
-                            break
-                    if not has_address:
-                        problems.append(f"{name}: load balancer address is empty")
-            else:
-                problems.append(f"{name}: no load balancer status")
+    problems, total_ingresses = validate_ingress_configuration(networking_v1, platform_namespaces, verbose=True)
     
-    assert not problems, (
-        f"{len(problems)} ingress issue(s) found (total: {total_ingresses} ingresses):\n" +
-        "\n".join(f"  - {p}" for p in problems)
-    )
+    logger.info("\n" + "="*70)
+    logger.info("SUMMARY")
+    logger.info("="*70)
+    
+    if problems:
+        logger.info(f"❌ {len(problems)} ingress issue(s) found (total: {total_ingresses} ingresses)\n")
+        pytest.fail(
+            f"{len(problems)} ingress issue(s) found (total: {total_ingresses} ingresses):\n" +
+            "\n".join(f"  - {p}" for p in problems)
+        )
+    
+    logger.info(f"✅ All {total_ingresses} ingresses are valid\n")
 
 
 @pytest.mark.quick
@@ -231,79 +146,24 @@ def test_ingress_dns(networking_v1, platform_namespaces):
     
     Cluster Impact: READ-ONLY (queries ingress resources + external DNS)
     """
-    dns_server = '1.1.1.1'
-    problems = []
-    checked_count = 0
+    logger.info("\n" + "="*70)
+    logger.info("INGRESS DNS CHECK")
+    logger.info("="*70)
     
-    # Create custom resolver with specified DNS server
-    resolver = dns.resolver.Resolver()
-    resolver.nameservers = [dns_server]
-    print(f"Using DNS server: {dns_server}")
+    problems, checked_count = validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1', verbose=True)
     
-    for namespace in platform_namespaces:
-        ingresses = networking_v1.list_namespaced_ingress(namespace=namespace)
-        
-        for ingress in ingresses.items:
-            name = f"{namespace}/{ingress.metadata.name}"
-            
-            # Skip if no rules or status
-            if not ingress.spec or not ingress.spec.rules:
-                continue
-            if not ingress.status or not ingress.status.load_balancer:
-                continue
-            
-            # Get expected LB IP(s)
-            expected_ips = set()
-            lb_ingress = ingress.status.load_balancer.ingress
-            if lb_ingress:
-                for lb in lb_ingress:
-                    if lb.ip and lb.ip.strip():
-                        expected_ips.add(lb.ip.strip())
-            
-            if not expected_ips:
-                continue
-            
-            # Check each host's DNS resolution
-            for rule in ingress.spec.rules:
-                if not rule.host or not rule.host.strip():
-                    continue
-                
-                host = rule.host.strip()
-                checked_count += 1
-                
-                # Query DNS using dnspython
-                try:
-                    # Resolve A records for the host using custom resolver
-                    answers = resolver.resolve(host, 'A')
-                    resolved_ips = set()
-                    for rdata in answers:
-                        resolved_ips.add(rdata.address)
-                    
-                    # Check if resolved IP matches expected LB IP
-                    if not resolved_ips:
-                        problems.append(f"{name}/{host}: no A record found")
-                    elif not resolved_ips.intersection(expected_ips):
-                        problems.append(
-                            f"{name}/{host}: resolves to {', '.join(sorted(resolved_ips))} "
-                            f"but expected {', '.join(sorted(expected_ips))}"
-                        )
-                    else:
-                        # DNS resolves correctly
-                        print(f"{host} → {', '.join(sorted(resolved_ips))} ✓")
-                
-                except dns.resolver.NXDOMAIN:
-                    problems.append(f"{name}/{host}: domain does not exist")
-                except dns.resolver.NoAnswer:
-                    problems.append(f"{name}/{host}: no A record found")
-                except dns.resolver.Timeout:
-                    problems.append(f"{name}/{host}: DNS lookup timeout")
-                except Exception as e:
-                    problems.append(f"{name}/{host}: DNS lookup error: {e}")
+    logger.info("\n" + "="*70)
+    logger.info("SUMMARY")
+    logger.info("="*70)
     
-    assert not problems, (
-        f"{len(problems)} DNS issue(s) found (checked {checked_count} hosts):\n" +
-        "\n".join(f"  - {p}" for p in problems)
-    )
+    if problems:
+        logger.info(f"❌ {len(problems)} DNS issue(s) found (checked {checked_count} hosts)\n")
+        pytest.fail(
+            f"{len(problems)} DNS issue(s) found (checked {checked_count} hosts):\n" +
+            "\n".join(f"  - {p}" for p in problems)
+        )
+    
+    logger.info(f"✅ All {checked_count} ingress hosts resolve correctly\n")
 
 
 @pytest.mark.quick
@@ -342,7 +202,7 @@ def test_ingress_oauth2_redirect(networking_v1, platform_namespaces, captain_dom
             
             # Check if ingress is in exception list
             if ingress.metadata.name in exceptions:
-                print(f"{name}: skipped (in exception list)")
+                logger.info(f"{name}: skipped (in exception list)")
                 continue
             
             checked_count += 1
@@ -357,14 +217,14 @@ def test_ingress_oauth2_redirect(networking_v1, platform_namespaces, captain_dom
             elif not auth_url.startswith(expected_oauth2_url):
                 problems.append(f"{name}: auth-url '{auth_url}' does not start with '{expected_oauth2_url}'")
             else:
-                print(f"{name}: auth-url ✓")
+                logger.info(f"{name}: auth-url ✓")
             
             if not auth_signin:
                 problems.append(f"{name}: missing nginx.ingress.kubernetes.io/auth-signin annotation")
             elif not auth_signin.startswith(expected_oauth2_url):
                 problems.append(f"{name}: auth-signin '{auth_signin}' does not start with '{expected_oauth2_url}'")
             else:
-                print(f"{name}: auth-signin ✓")
+                logger.info(f"{name}: auth-signin ✓")
             
             # Test actual HTTP redirect if ingress has hosts
             if ingress.spec and ingress.spec.rules:
@@ -382,21 +242,21 @@ def test_ingress_oauth2_redirect(networking_v1, platform_namespaces, captain_dom
                         if response.status_code in [301, 302, 307, 308]:
                             location = response.headers.get('Location', '')
                             if location.startswith(expected_oauth2_url):
-                                print(f"{name} ({host}): HTTP redirect to OAuth2 ✓")
+                                logger.info(f"{name} ({host}): HTTP redirect to OAuth2 ✓")
                             else:
                                 problems.append(f"{name} ({host}): redirects to '{location}' instead of OAuth2")
                         elif response.status_code == 401 or response.status_code == 403:
                             # Auth challenge without redirect - still protected
-                            print(f"{name} ({host}): auth challenge (status {response.status_code}) ✓")
+                            logger.info(f"{name} ({host}): auth challenge (status {response.status_code}) ✓")
                         else:
-                            print(f"{name} ({host}): unexpected status {response.status_code}")
+                            logger.info(f"{name} ({host}): unexpected status {response.status_code}")
                     
                     except requests.exceptions.Timeout:
-                        print(f"{name} ({host}): HTTP request timeout (skipped)")
+                        logger.info(f"{name} ({host}): HTTP request timeout (skipped)")
                     except requests.exceptions.ConnectionError:
-                        print(f"{name} ({host}): connection failed (skipped)")
+                        logger.info(f"{name} ({host}): connection failed (skipped)")
                     except Exception as e:
-                        print(f"{name} ({host}): HTTP test error: {e}")
+                        logger.info(f"{name} ({host}): HTTP test error: {e}")
     
     assert not problems, (
         f"{len(problems)} OAuth2 configuration issue(s) found (checked {checked_count} ingresses):\n" +
@@ -458,16 +318,16 @@ def test_alertmanager_alerts(core_v1):
         
         # Build output for passable alerts (info only)
         if passable:
-            print(f"\nExpected alerts (informational, {len(passable)} alert(s)):")
+            logger.info(f"\nExpected alerts (informational, {len(passable)} alert(s)):")
             for alert in passable:
                 labels = alert.get("labels", {})
                 annotations = alert.get("annotations", {})
                 name = labels.get("alertname", "Unknown")
                 severity = labels.get("severity", "unknown")
                 summary = annotations.get("summary", "")
-                print(f"  {name} (severity: {severity})")
+                logger.info(f"  {name} (severity: {severity})")
                 if summary:
-                    print(f"    {summary}")
+                    logger.info(f"    {summary}")
         
         # Build error message for problematic alerts
         if problematic:

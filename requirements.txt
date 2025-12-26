@@ -2,6 +2,7 @@ kubernetes==34.1.0
 hvac==2.4.0
 dnspython==2.7.0
 requests==2.32.3
+cryptography==44.0.0       # Certificate parsing for LetsEncrypt validation
 
 # Pytest dependencies
 pytest==9.0.2

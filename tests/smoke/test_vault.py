@@ -1,121 +1,21 @@
 """Vault secrets tests"""
 import pytest
-import json
+import logging
 import time
-from pathlib import Path
-from lib.port_forward import PortForward
+from lib.vault_helpers import (
+    get_vault_client,
+    cleanup_vault_client,
+    create_multiple_vault_secrets,
+    delete_multiple_vault_secrets,
+    verify_vault_secrets
+)
+
+logger = logging.getLogger(__name__)
 
 try:
     import hvac
-    import urllib3
 except ImportError:
     hvac = None
-    urllib3 = None
-
-
-def get_vault_root_token(captain_domain):
-    """Extract Vault root token from terraform state file.
-    
-    Reads terraform state from:
-    /workspaces/glueops/{captain_domain}/terraform/vault/configuration/terraform.tfstate
-    
-    Searches for aws_s3_object.vault_access data source and parses
-    the body JSON to extract root_token.
-    
-    Args:
-        captain_domain: Domain name used in directory path
-    
-    Returns: Vault root token string
-    
-    Raises:
-        FileNotFoundError: If terraform.tfstate file doesn't exist
-        ValueError: If root_token not found in state file
-    """
-    tfstate_path = Path(f"/workspaces/glueops/{captain_domain}/terraform/vault/configuration/terraform.tfstate")
-    
-    if not tfstate_path.exists():
-        raise FileNotFoundError(f"Terraform state not found: {tfstate_path}")
-    
-    with open(tfstate_path, 'r') as f:
-        tfstate = json.load(f)
-    
-    # Find the vault_access data source
-    for resource in tfstate.get('resources', []):
-        if (resource.get('type') == 'aws_s3_object' and 
-            resource.get('name') == 'vault_access' and
-            resource.get('mode') == 'data'):
-            
-            for instance in resource.get('instances', []):
-                body = instance.get('attributes', {}).get('body')
-                if body:
-                    vault_data = json.loads(body)
-                    return vault_data.get('root_token')
-    
-    raise ValueError("Root token not found in terraform state")
-
-
-def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault_service="vault"):
-    """Create authenticated Vault client with kubectl port-forward.
-    
-    Establishes port-forward to Vault service and creates hvac client.
-    
-    Process:
-    1. Extracts root token from terraform state
-    2. Creates port-forward to vault:8200 service
-    3. Creates hvac.Client with token authentication (SSL verification disabled)
-    4. Verifies authentication
-    
-    The port-forward is attached to the client object (_port_forward attribute)
-    and must be cleaned up with cleanup_vault_client() after use.
-    
-    Args:
-        captain_domain: Domain for locating terraform state
-        vault_namespace: Kubernetes namespace (default: glueops-core-vault)
-        vault_service: Kubernetes service name (default: vault)
-    
-    Returns: Authenticated hvac.Client with _port_forward attached
-    
-    Raises:
-        ImportError: If hvac library not installed
-        Exception: If authentication fails
-    """
-    if hvac is None:
-        raise ImportError("hvac library not installed. Run: pip install hvac")
-    
-    token = get_vault_root_token(captain_domain)
-    
-    # Use port-forward context manager
-    port_forward = PortForward(namespace=vault_namespace, service=vault_service, port=8200)
-    port_forward.__enter__()
-    vault_addr = f"https://127.0.0.1:{port_forward.local_port}"
-    
-    # Disable SSL warnings for local connections
-    if urllib3:
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    
-    client = hvac.Client(url=vault_addr, token=token, verify=False)
-    
-    if not client.is_authenticated():
-        port_forward.__exit__(None, None, None)
-        raise Exception("Failed to authenticate with Vault")
-    
-    # Attach port_forward to client so it stays alive
-    client._port_forward = port_forward
-    
-    return client
-
-
-def cleanup_vault_client(client):
-    """Cleanup Vault client and terminate port-forward.
-    
-    Closes the port-forward process attached to the client.
-    Must be called after get_vault_client() to avoid leaving kubectl processes running.
-    
-    Args:
-        client: hvac.Client returned from get_vault_client()
-    """
-    if hasattr(client, '_port_forward'):
-        client._port_forward.__exit__(None, None, None)
 
 
 @pytest.mark.slow
@@ -145,96 +45,124 @@ def test_vault_secret_creation(captain_domain, request):
     verbose = request.config.option.verbose > 0
     vault_namespace = "glueops-core-vault"
     
+    logger.info("\\n" + "="*70)
+    logger.info("VAULT SECRET CREATION TEST")
+    logger.info("="*70)
+    logger.info(f"  Secrets to create: {num_secrets}")
+    logger.info(f"  Prefix: {secret_prefix}")
+    logger.info(f"  Cleanup enabled: {cleanup}")
+    logger.info("")
+    
     client = None
     try:
-        if verbose:
-            print(f"  Setting up port-forward to Vault in {vault_namespace}...")
+        # Connect to Vault
+        client = get_vault_client(captain_domain, vault_namespace=vault_namespace, verbose=verbose)
         
-        client = get_vault_client(captain_domain, vault_namespace=vault_namespace)
-        
-        if verbose:
-            print(f"  Connected to Vault, creating {num_secrets} secrets...")
-        
-        created_paths = []
-        failures = []
+        # Prepare secret configurations
+        logger.info(f"\ud83d\udcdd Preparing {num_secrets} secret configurations...")
+        secret_configs = [
+            {
+                'path': f"{secret_prefix}/path-{i}/secret",
+                'data': {
+                    "test_key": f"test_value_{i}",
+                    "index": i,
+                    "purpose": "smoke_test"
+                }
+            }
+            for i in range(num_secrets)
+        ]
+        logger.info(f"  \u2713 Configurations prepared\\n")
         
         # Create secrets
-        for i in range(num_secrets):
-            path = f"{secret_prefix}/path-{i}/secret"
-            data = {
-                "test_key": f"test_value_{i}",
-                "index": i,
-                "purpose": "smoke_test"
-            }
-            
-            try:
-                client.secrets.kv.v2.create_or_update_secret(
-                    path=path,
-                    secret=data,
-                    mount_point='secret'
-                )
-                created_paths.append(path)
-                
-                if verbose and (i + 1) % 10 == 0:
-                    print(f"  Created {i + 1}/{num_secrets} secrets...")
-                    
-            except Exception as e:
-                failures.append(f"path-{i}: {str(e)}")
+        logger.info("="*70)
+        logger.info("STEP 1: Creating secrets")
+        logger.info("="*70)
+        created_paths, create_failures = create_multiple_vault_secrets(
+            client, secret_configs, verbose=True
+        )
         
-        # Verify secrets were created
-        verification_failures = []
-        for path in created_paths[:5]:  # Verify first 5 as sample
-            try:
-                secret = client.secrets.kv.v2.read_secret_version(
-                    path=path,
-                    mount_point='secret',
-                    raise_on_deleted_version=False
-                )
-                if not secret['data']['data']:
-                    verification_failures.append(f"{path}: empty data")
-            except Exception as e:
-                verification_failures.append(f"{path}: {str(e)}")
+        if create_failures:
+            logger.info(f"\\n\u26a0\ufe0f  Encountered {len(create_failures)} error(s) during creation:")
+            for error in create_failures[:5]:  # Show first 5 errors
+                logger.info(f"     \u2022 {error}")
+            if len(create_failures) > 5:
+                logger.info(f"     ... and {len(create_failures) - 5} more")
         
-        if verbose:
-            print(f"  ✓ All {len(created_paths)} secrets created successfully!")
-            if cleanup:
-                print(f"  ⏸  Waiting 30 seconds before cleanup (check Vault UI now)...")
-                time.sleep(30)
+        # Verify secrets (sample first 5)
+        logger.info("\\n" + "="*70)
+        logger.info("STEP 2: Verifying secrets")
+        logger.info("="*70)
+        verify_failures = verify_vault_secrets(
+            client, created_paths, sample_size=5, verbose=True
+        )
+        
+        if verify_failures:
+            logger.info(f"\n⚠️  Encountered {len(verify_failures)} verification error(s):")
+            for error in verify_failures:
+                logger.info(f"     • {error}")
+        
+        # Wait before cleanup
+        if verbose and cleanup and len(created_paths) > 0:
+            logger.info("\n" + "="*70)
+            logger.info("STEP 3: Waiting before cleanup")
+            logger.info("="*70)
+            logger.info(f"  ⏸  Waiting 30 seconds (check Vault UI now)...")
+            logger.info(f"  📍 Check paths: secret/data/{secret_prefix}/path-*/secret")
+            for i in range(30, 0, -5):
+                logger.info(f"     {i} seconds remaining...")
+                time.sleep(5)
+            logger.info(f"  ✓ Wait complete\n")
         
         # Cleanup if requested
+        cleanup_failures = []
+        if cleanup and len(created_paths) > 0:
+            logger.info("="*70)
+            logger.info("STEP 4: Cleanup")
+            logger.info("="*70)
+            cleanup_failures = delete_multiple_vault_secrets(
+                client, created_paths, verbose=True
+            )
+            
+            if cleanup_failures:
+                logger.info(f"\n⚠️  Encountered {len(cleanup_failures)} cleanup error(s):")
+                for error in cleanup_failures[:5]:
+                    logger.info(f"     • {error}")
+                if len(cleanup_failures) > 5:
+                    logger.info(f"     ... and {len(cleanup_failures) - 5} more")
+        
+        # Final summary
+        logger.info("\n" + "="*70)
+        logger.info("TEST SUMMARY")
+        logger.info("="*70)
+        logger.info(f"  Created: {len(created_paths)}/{num_secrets} secrets")
+        logger.info(f"  Create failures: {len(create_failures)}")
+        logger.info(f"  Verify failures: {len(verify_failures)}")
         if cleanup:
-            cleanup_failures = []
-            if verbose:
-                print(f"  🧹 Starting cleanup...")
-            
-            for path in created_paths:
-                try:
-                    client.secrets.kv.v2.delete_metadata_and_all_versions(
-                        path=path,
-                        mount_point='secret'
-                    )
-                except Exception as e:
-                    cleanup_failures.append(f"{path}: {str(e)}")
-            
-            if verbose:
-                print(f"  Cleaned up {len(created_paths) - len(cleanup_failures)}/{len(created_paths)} secrets")
+            logger.info(f"  Cleanup failures: {len(cleanup_failures)}")
+        logger.info("")
         
         # Assert no failures
-        if failures:
-            pytest.fail(f"Failed to create {len(failures)}/{num_secrets} secrets:\n" +
-                       "\n".join(f"  - {f}" for f in failures[:5]))
+        if create_failures:
+            pytest.fail(
+                f"❌ Failed to create {len(create_failures)}/{num_secrets} secrets:\n" +
+                "\n".join(f"  - {f}" for f in create_failures[:5])
+            )
         
-        if verification_failures:
-            pytest.fail(f"Created but failed to verify {len(verification_failures)} secrets:\n" +
-                       "\n".join(f"  - {v}" for v in verification_failures))
+        if verify_failures:
+            pytest.fail(
+                f"❌ Created but failed to verify {len(verify_failures)} secrets:\n" +
+                "\n".join(f"  - {v}" for v in verify_failures)
+            )
         
         if cleanup and cleanup_failures:
-            pytest.fail(f"Created successfully but failed to cleanup {len(cleanup_failures)} secrets:\n" +
-                       "\n".join(f"  - {c}" for c in cleanup_failures[:5]))
+            pytest.fail(
+                f"❌ Created successfully but failed to cleanup {len(cleanup_failures)} secrets:\n" +
+                "\n".join(f"  - {c}" for c in cleanup_failures[:5])
+            )
         
         action = "created and cleaned up" if cleanup else "created"
-        print(f"✓ {num_secrets} secrets {action}")
+        logger.info(f"✅ SUCCESS: {num_secrets} secrets {action}")
     
     finally:
         if client:
-            cleanup_vault_client(client)
+            cleanup_vault_client(client, verbose=verbose)
