@@ -1,6 +1,7 @@
 """Test cluster-info page and verify all HTTPS links are accessible."""
 import pytest
 import logging
+from urllib.parse import urlparse
 from tests.ui.helpers import ScreenshotManager
 
 log = logging.getLogger(__name__)
@@ -113,7 +114,7 @@ def test_cluster_info_links(page, github_credentials, captain_domain, request):
             page.wait_for_timeout(5000)
             
             # Capture screenshot using centralized manager
-            screenshot_manager.capture(page, link_url, description=f"Link {i}")
+            screenshot_manager.capture(page, link_url, description=f"{i}. {urlparse(link_url).netloc}")
             
             log.info(f"✅ Successfully visited: {link_url}")
             

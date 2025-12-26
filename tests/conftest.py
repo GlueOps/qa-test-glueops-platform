@@ -90,28 +90,43 @@ def pytest_runtest_makereport(item, call):
             # Add docstring as description if it exists
             if item.obj.__doc__:
                 docstring = item.obj.__doc__.strip()
-                extra.append(extras.html(f'<div style="margin: 10px 0; padding: 10px; background-color: #f5f5f5; border-left: 3px solid #2196F3;"><strong>Description:</strong><br>{docstring}</div>'))
-                
+                extra.append(extras.html(f'<div style="margin: 10px 0; padding: 10px; background-color: #f5f5f5; border-left: 3px solid #2196F3; white-space: pre-wrap;"><strong>Description:</strong><br>{docstring}</div>'))
             # Add screenshots to HTML report if they exist  
             screenshots = getattr(item, '_screenshots', [])
             if screenshots:
                 extra.append(extras.html(f'<div style="margin: 15px 0 5px 0;"><strong>📸 Screenshots ({len(screenshots)}):</strong></div>'))
+                
+                # Build table with all screenshots
+                table_rows = []
                 for screenshot_path, description in screenshots:
                     screenshot_path_obj = Path(screenshot_path)
                     if screenshot_path_obj.exists():
                         # Use relative path from HTML report to screenshot
                         rel_path = f"screenshots/{screenshot_path_obj.name}"
-                        
-                        # Clean link with icon and styling
-                        extra.append(extras.html(f'''
-                            <div style="margin: 5px 0; padding: 8px 12px; background-color: #fff; border: 1px solid #e0e0e0; border-radius: 4px; display: inline-block;">
-                                <a href="{rel_path}" target="_blank" style="text-decoration: none; color: #0066cc; font-size: 13px; display: flex; align-items: center; gap: 8px;">
-                                    <span style="font-size: 16px;">🖼️</span>
-                                    <span style="font-weight: 500;">{description}</span>
-                                    <span style="color: #999; font-size: 11px;">↗</span>
-                                </a>
-                            </div>
-                        '''))
+                        table_rows.append(f'''
+                            <tr>
+                                <td style="padding: 3px 6px; border: 1px solid #ddd; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px;">{description}</td>
+                                <td style="padding: 3px 6px; border: 1px solid #ddd; text-align: center; width: 50px;">
+                                    <a href="{rel_path}" target="_blank" style="text-decoration: none; color: #0066cc; font-size: 11px;">View</a>
+                                </td>
+                            </tr>
+                        ''')
+                
+                # Add complete table as single HTML element
+                if table_rows:
+                    extra.append(extras.html(f'''
+                        <table style="max-width: 350px; border-collapse: collapse; font-size: 11px; margin: 5px 0;">
+                            <thead>
+                                <tr style="background-color: #f5f5f5;">
+                                    <th style="padding: 4px 6px; border: 1px solid #ddd; text-align: left; font-weight: 600; font-size: 11px;">Link</th>
+                                    <th style="padding: 4px 6px; border: 1px solid #ddd; text-align: center; width: 50px; font-weight: 600; font-size: 11px;">Screenshot</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {''.join(table_rows)}
+                            </tbody>
+                        </table>
+                    '''))
                         
             report.extras = extra
         except Exception as e:
