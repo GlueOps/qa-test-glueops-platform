@@ -7,7 +7,7 @@ cryptography==44.0.0       # Certificate parsing for LetsEncrypt validation
 # Pytest dependencies
 pytest==9.0.2
 pytest-xdist==3.8.0        # Parallel execution
-pytest-html==4.1.1         # HTML reports
+allure-pytest==2.13.5      # Allure reports with native screenshot attachments
 pytest-json-report==1.5.0  # JSON reports for CI/CD
 pytest-timeout==2.4.0      # Timeout handling
 pytest-rerunfailures==16.1 # Automatic retry for flaky tests
@@ -19,3 +19,9 @@ pyotp==2.9.0               # TOTP 2FA for GitHub login
 
 # GitHub API
 PyGithub==2.5.0            # GitHub API client for GitOps tests
+
+# Static analysis and code quality
+mypy==1.13.0               # Static type checking
+pylint==3.3.2              # Code linting
+types-requests==2.32.0.20241016  # Type stubs for requests library
+types-requests==2.32.0.20241016  # Type stubs for requests library

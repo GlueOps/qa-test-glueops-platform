@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# CONFIGURATION CONSTANTS
+# =============================================================================
+
+# Polling configuration for all wait operations
+DEFAULT_POLL_INTERVAL = 15  # seconds between status checks
+DEFAULT_TIMEOUT = 600  # 10 minutes max wait time
+
+
+# =============================================================================
 # NAMESPACE UTILITIES
 # =============================================================================
 
@@ -53,7 +62,7 @@ def get_platform_namespaces(core_v1, namespace_filter=None):
 # JOB/POD VALIDATION
 # =============================================================================
 
-def wait_for_job_completion(batch_v1, job_name, namespace, timeout=300):
+def wait_for_job_completion(batch_v1, job_name, namespace):
     """
     Wait for a job to complete and return its status.
     
@@ -61,14 +70,13 @@ def wait_for_job_completion(batch_v1, job_name, namespace, timeout=300):
         batch_v1: Kubernetes BatchV1Api client
         job_name: Name of the Job resource
         namespace: Namespace of the Job
-        timeout: Maximum wait time in seconds (default: 300)
     
     Returns:
         str: 'succeeded', 'failed', or 'timeout'
     """
     start_time = time.time()
     
-    while time.time() - start_time < timeout:
+    while time.time() - start_time < DEFAULT_TIMEOUT:
         try:
             job = batch_v1.read_namespaced_job(name=job_name, namespace=namespace)
             if job.status.succeeded and job.status.succeeded > 0:
@@ -181,6 +189,328 @@ def validate_all_argocd_apps(custom_api, namespace_filter=None, verbose=True):
         logger.info(f"  All {total_apps} applications healthy and synced")
     
     return problems
+
+
+def wait_for_argocd_apps_deleted(custom_api, namespace: str, verbose: bool = True) -> bool:
+    """
+    Wait for all ArgoCD applications in a namespace to be deleted.
+    
+    This is used during teardown to ensure all applications are removed
+    before deleting the AppProject and Namespace.
+    
+    Args:
+        custom_api: Kubernetes CustomObjectsApi client
+        namespace: Namespace to check for ArgoCD applications
+        verbose: Print status updates (default: True)
+        
+    Returns:
+        bool: True if all apps deleted within timeout, False otherwise
+    """
+    from kubernetes.client.rest import ApiException
+    
+    start_time = time.time()
+    
+    if verbose:
+        logger.info(f"Waiting for ArgoCD applications in namespace '{namespace}' to be deleted...")
+    
+    while time.time() - start_time < DEFAULT_TIMEOUT:
+        try:
+            apps = custom_api.list_namespaced_custom_object(
+                group="argoproj.io",
+                version="v1alpha1",
+                namespace=namespace,
+                plural="applications"
+            )
+            
+            app_count = len(apps.get('items', []))
+            
+            if app_count == 0:
+                if verbose:
+                    logger.info(f"✓ All ArgoCD applications in '{namespace}' have been deleted")
+                return True
+            
+            if verbose:
+                elapsed = int(time.time() - start_time)
+                logger.info(f"  {app_count} application(s) remaining in '{namespace}' ({elapsed}s elapsed)")
+            
+            time.sleep(DEFAULT_POLL_INTERVAL)
+            
+        except ApiException as e:
+            if e.status == 404:
+                # Namespace or CRD not found - consider this as "deleted"
+                if verbose:
+                    logger.info(f"✓ Namespace '{namespace}' not found (already deleted)")
+                return True
+            else:
+                raise
+    
+    # Timeout reached
+    if verbose:
+        logger.warning(f"⚠ Timeout waiting for ArgoCD apps in '{namespace}' to be deleted after {DEFAULT_TIMEOUT}s")
+    
+    return False
+
+
+def ensure_argocd_app_allows_empty(custom_api, app_name, namespace="glueops-core", verbose=False):
+    """
+    Patch ArgoCD application to allow empty sync (no resources).
+    This prevents the "auto-sync will wipe out all resources" error.
+    
+    Args:
+        custom_api: Kubernetes CustomObjectsApi client
+        app_name: Name of the ArgoCD Application to patch
+        namespace: Namespace where the Application resource exists (default: glueops-core)
+        verbose: Enable verbose logging
+    
+    Returns:
+        bool: True if patch successful, False otherwise
+    """
+    try:
+        if verbose:
+            logger.info(f"Ensuring '{app_name}' allows empty sync...")
+        
+        # Patch to add allowEmpty and enable auto-sync with prune
+        # Comment added to indicate this was modified by test automation
+        patch = {
+            "spec": {
+                "syncPolicy": {
+                    "automated": {
+                        "prune": True,
+                        "allowEmpty": True,  # Added by testing automation - allows sync when manifests directory is empty
+                        "selfHeal": True
+                    }
+                }
+            }
+        }
+        
+        custom_api.patch_namespaced_custom_object(
+            group="argoproj.io",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="applications",
+            name=app_name,
+            body=patch
+        )
+        
+        if verbose:
+            logger.info(f"  ✓ Patched '{app_name}' with allowEmpty=true")
+        
+        return True
+        
+    except ApiException as e:
+        if e.status == 404:
+            if verbose:
+                logger.warning(f"⚠ Application '{app_name}' not found")
+            return False
+        else:
+            logger.error(f"Failed to patch '{app_name}': {e}")
+            raise
+
+
+def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core", verbose=False):
+    """
+    Force sync an ArgoCD application if not already syncing.
+    
+    First ensures the app allows empty sync, waits for stabilization,
+    then checks if an operation is running before triggering sync.
+    
+    Args:
+        custom_api: Kubernetes CustomObjectsApi client
+        app_name: Name of the ArgoCD Application to sync
+        namespace: Namespace where the Application resource exists (default: glueops-core)
+        verbose: Enable verbose logging
+    
+    Returns:
+        bool: True if sync triggered or already running, False otherwise
+    """
+    try:
+        if verbose:
+            logger.info(f"Force syncing ArgoCD application '{app_name}' in namespace '{namespace}'...")
+        
+        # Step 1: Ensure app allows empty sync (prevents "wipe out all resources" error)
+        ensure_argocd_app_allows_empty(custom_api, app_name, namespace, verbose)
+        
+        # Step 2: Wait for the patch to take effect and ArgoCD to react
+        if verbose:
+            logger.info(f"  Waiting 30s for sync policy changes to take effect...")
+        time.sleep(30)
+        
+        # Step 3: Check if an operation is already running
+        app = custom_api.get_namespaced_custom_object(
+            group="argoproj.io",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="applications",
+            name=app_name
+        )
+        
+        operation_state = app.get('status', {}).get('operationState', {})
+        phase = operation_state.get('phase', '')
+        
+        if phase in ['Running', 'Terminating']:
+            if verbose:
+                logger.info(f"  ⚙️  Operation already {phase.lower()}, not triggering new sync")
+            return True
+        
+        # Step 4: Trigger a refresh to ensure ArgoCD has latest repo state
+        refresh_patch = {
+            "metadata": {
+                "annotations": {
+                    "argocd.argoproj.io/refresh": "normal"
+                }
+            }
+        }
+        
+        custom_api.patch_namespaced_custom_object(
+            group="argoproj.io",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="applications",
+            name=app_name,
+            body=refresh_patch
+        )
+        
+        if verbose:
+            logger.info(f"  Triggered refresh for '{app_name}'")
+        
+        time.sleep(5)
+        
+        # Step 5: Force sync with prune enabled
+        sync_patch = {
+            "operation": {
+                "initiatedBy": {
+                    "username": "pytest-automation"
+                },
+                "sync": {
+                    "revision": "HEAD",
+                    "prune": True,
+                    "syncOptions": ["CreateNamespace=true"]
+                }
+            }
+        }
+        
+        custom_api.patch_namespaced_custom_object(
+            group="argoproj.io",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="applications",
+            name=app_name,
+            body=sync_patch
+        )
+        
+        if verbose:
+            logger.info(f"✓ Force sync triggered for '{app_name}'")
+        
+        return True
+        
+    except ApiException as e:
+        if e.status == 404:
+            if verbose:
+                logger.warning(f"⚠ Application '{app_name}' not found in namespace '{namespace}'")
+            return False
+        else:
+            logger.error(f"Failed to force sync '{app_name}': {e}")
+            raise
+
+
+def wait_for_argocd_app_healthy(custom_api, app_name, namespace="glueops-core", allow_missing=False, verbose=False, timeout=DEFAULT_TIMEOUT):
+    """
+    Wait for an ArgoCD application to become Healthy and Synced.
+    More lenient - considers app healthy if it has no resources to manage.
+    
+    Args:
+        custom_api: Kubernetes CustomObjectsApi client
+        app_name: Name of the ArgoCD Application to check
+        namespace: Namespace where the Application resource exists (default: glueops-core)
+        allow_missing: If True, treat missing app as success (default: False)
+        verbose: Enable verbose logging
+        timeout: Timeout in seconds (default: DEFAULT_TIMEOUT)
+    
+    Returns:
+        bool: True if app becomes healthy within timeout, False otherwise
+    """
+    start_time = time.time()
+    
+    if verbose:
+        logger.info(f"Waiting for ArgoCD application '{app_name}' to stabilize...")
+    
+    last_error_type = None
+    consecutive_good_checks = 0
+    required_consecutive_checks = 2  # Need 2 consecutive good checks to be sure
+    
+    while time.time() - start_time < timeout:
+        try:
+            app = custom_api.get_namespaced_custom_object(
+                group="argoproj.io",
+                version="v1alpha1",
+                namespace=namespace,
+                plural="applications",
+                name=app_name
+            )
+            
+            status = app.get('status', {})
+            health_status = status.get('health', {}).get('status', 'Unknown')
+            sync_status = status.get('sync', {}).get('status', 'Unknown')
+            
+            # Check for sync errors
+            conditions = status.get('conditions', [])
+            sync_errors = [c for c in conditions if c.get('type') == 'SyncError']
+            
+            # If app has no resources to manage, it might show as "Missing" health
+            # This is acceptable after cleanup
+            resources = status.get('resources', [])
+            has_resources = len(resources) > 0
+            
+            # Success conditions:
+            # 1. Healthy + Synced (normal case)
+            # 2. Missing health + Synced + no resources (empty app after cleanup)
+            is_healthy = (
+                (health_status == 'Healthy' and sync_status == 'Synced') or
+                (health_status == 'Missing' and sync_status == 'Synced' and not has_resources)
+            )
+            
+            if is_healthy:
+                consecutive_good_checks += 1
+                if consecutive_good_checks >= required_consecutive_checks:
+                    if verbose:
+                        state_desc = "Healthy/Synced" if health_status == 'Healthy' else "Synced (no resources)"
+                        logger.info(f"✓ Application '{app_name}' is {state_desc}")
+                    return True
+                elif verbose:
+                    logger.info(f"  {app_name}: {health_status}/{sync_status} (confirming... {consecutive_good_checks}/{required_consecutive_checks})")
+            else:
+                consecutive_good_checks = 0
+                
+                # Log sync errors if present
+                if sync_errors and verbose:
+                    error_msg = sync_errors[0].get('message', 'Unknown error')
+                    if error_msg != last_error_type:
+                        logger.info(f"  {app_name}: {health_status}/{sync_status} - {error_msg}")
+                        last_error_type = error_msg
+                elif verbose:
+                    elapsed = int(time.time() - start_time)
+                    logger.info(f"  {app_name}: {health_status}/{sync_status} (resources: {len(resources)}, {elapsed}s elapsed)")
+            
+            time.sleep(DEFAULT_POLL_INTERVAL)
+            
+        except ApiException as e:
+            if e.status == 404:
+                if allow_missing:
+                    if verbose:
+                        logger.info(f"✓ Application '{app_name}' not found (treated as success)")
+                    return True
+                else:
+                    if verbose:
+                        logger.warning(f"⚠ Application '{app_name}' not found")
+                    return False
+            else:
+                raise
+    
+    # Timeout reached
+    if verbose:
+        logger.warning(f"⚠ Timeout waiting for '{app_name}' to stabilize after {timeout}s")
+    
+    return False
 
 
 # =============================================================================

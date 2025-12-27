@@ -18,14 +18,16 @@ from tests.helpers.assertions import (
 )
 from tests.helpers.k8s import get_ingress_load_balancer_ip
 from tests.helpers.github import create_github_file
-from tests.helpers.utils import display_progress_bar, print_section_header, print_summary_list
+from tests.helpers.argocd import wait_for_appset_apps_created_and_healthy, calculate_expected_app_count
+from tests.helpers.utils import print_section_header, print_summary_list
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.gitops
 @pytest.mark.letsencrypt
-def test_letsencrypt_http01_challenge(ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
+@pytest.mark.captain_manifests
+def test_letsencrypt_http01_challenge(captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
     """
     Test LetsEncrypt certificate issuance via HTTP01 challenge.
     
@@ -41,6 +43,7 @@ def test_letsencrypt_http01_challenge(ephemeral_github_repo, custom_api, core_v1
     
     Applications use pattern: letsencrypt-test-<guid>-<lb-ip>.{wildcard_dns_service}
     """
+    _ = captain_manifests  # Used for namespace/appproject/appset setup
     repo = ephemeral_github_repo
     
     # Get the ingress load balancer IP
@@ -128,40 +131,41 @@ podDisruptionBudget:
         title="Applications to validate"
     )
     
-    # Wait for ArgoCD sync and deployments
-    print_section_header("STEP 3: Waiting for GitOps Sync")
-    
-    display_progress_bar(
-        wait_time=300,
-        interval=15,
-        description="Waiting for ArgoCD sync and deployments (5 minutes)",
+    # Wait for ApplicationSet to discover and sync the apps we just created
+    expected_total = calculate_expected_app_count(captain_manifests, num_apps)
+    logger.info(f"\n⏳ Waiting for ApplicationSet to sync {num_apps} test-specific app(s) (total: {expected_total})...")
+    apps_ready = wait_for_appset_apps_created_and_healthy(
+        custom_api,
+        namespace=captain_manifests['namespace'],
+        expected_count=expected_total,
         verbose=True
     )
     
+    if not apps_ready:
+        pytest.fail(f"ApplicationSet did not create/sync {num_apps} apps within timeout")
+    
     # Validate ArgoCD applications
-    print_section_header("STEP 4: Checking ArgoCD Application Status")
+    print_section_header("STEP 3: Checking ArgoCD Application Status")
     
     assert_argocd_healthy(custom_api, namespace_filter=None, verbose=True)
     
     # Validate pod health
-    print_section_header("STEP 5: Checking Pod Health")
+    print_section_header("STEP 4: Checking Pod Health")
     
     assert_pods_healthy(core_v1, platform_namespaces, verbose=True)
     
     # Wait for certificates to be issued
-    print_section_header("STEP 6: Waiting for LetsEncrypt Certificates (up to 10 min)")
+    print_section_header("STEP 5: Waiting for LetsEncrypt Certificates")
     
     assert_certificates_ready(
         custom_api,
         cert_info_list=app_info,
         namespace='nonprod',
-        timeout=600,
-        poll_interval=10,
         verbose=True
     )
     
     # Validate TLS secrets
-    print_section_header("STEP 7: Validating TLS Secrets")
+    print_section_header("STEP 6: Validating TLS Secrets")
     
     cert_infos = assert_tls_secrets_valid(
         core_v1,
@@ -171,7 +175,7 @@ podDisruptionBudget:
     )
     
     # Validate HTTPS endpoints
-    print_section_header("STEP 8: Validating HTTPS Endpoints")
+    print_section_header("STEP 7: Validating HTTPS Endpoints")
     
     assert_https_endpoints_valid(
         endpoint_info_list=app_info,

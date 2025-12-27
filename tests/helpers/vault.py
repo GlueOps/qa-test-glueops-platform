@@ -9,15 +9,20 @@ import random
 import logging
 from pathlib import Path
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
-logger = logging.getLogger(__name__)
-
-try:
+if TYPE_CHECKING:
     import hvac
     import urllib3
-except ImportError:
-    hvac = None
-    urllib3 = None
+else:
+    try:
+        import hvac
+        import urllib3
+    except ImportError:
+        hvac = None  # type: ignore
+        urllib3 = None  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 from tests.helpers.port_forward import PortForward
 

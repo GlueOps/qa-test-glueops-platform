@@ -11,7 +11,8 @@ import uuid
 from pathlib import Path
 from datetime import datetime
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+import allure
 
 log = logging.getLogger(__name__)
 
@@ -191,7 +192,7 @@ class ScreenshotManager:
     and summary generation for pytest-html reports.
     """
     
-    def __init__(self, screenshots_dir: str = None, test_name: str = None, request=None):
+    def __init__(self, screenshots_dir: Optional[str] = None, test_name: Optional[str] = None, request=None):
         """
         Initialize screenshot manager.
         
@@ -202,14 +203,13 @@ class ScreenshotManager:
         """
         if screenshots_dir is None:
             if request and hasattr(request, 'config'):
-                html_path = request.config.getoption("--html", default=None)
-                if html_path:
-                    from pathlib import Path
-                    screenshots_dir = str(Path(html_path).parent / "screenshots")
+                allure_dir = request.config.getoption("--alluredir", default=None)
+                if allure_dir:
+                    screenshots_dir = str(Path(allure_dir).parent / "screenshots")
                 else:
-                    screenshots_dir = "reports/screenshots"
+                    screenshots_dir = "allure-results/screenshots"
             else:
-                screenshots_dir = "reports/screenshots"
+                screenshots_dir = "allure-results/screenshots"
         self.screenshots_dir = Path(screenshots_dir)
         self.test_name = test_name or "test"
         self.screenshots: List[Tuple[str, str, str]] = []
@@ -221,11 +221,11 @@ class ScreenshotManager:
         self, 
         page: Page, 
         url: str, 
-        description: str = None,
+        description: Optional[str] = None,
         full_page: bool = True
     ) -> Path:
         """
-        Capture a screenshot with friendly name and UUID suffix.
+        Capture a screenshot and attach to Allure report.
         
         Args:
             page: Playwright page instance
@@ -242,16 +242,18 @@ class ScreenshotManager:
         screenshot_path = self.screenshots_dir / screenshot_filename
         
         log.info(f"📸 Capturing screenshot: {screenshot_filename}")
-        page.screenshot(path=str(screenshot_path), full_page=full_page)
+        screenshot_bytes = page.screenshot(path=str(screenshot_path), full_page=full_page)
         
         desc = description or url
         self.screenshots.append((screenshot_filename, url, desc))
         log.info(f"✅ Screenshot saved: {screenshot_filename}")
         
-        if self.request and hasattr(self.request, 'node'):
-            if not hasattr(self.request.node, '_screenshots'):
-                self.request.node._screenshots = []
-            self.request.node._screenshots.append((str(screenshot_path), desc))
+        # Attach to Allure report immediately
+        allure.attach(
+            screenshot_bytes,
+            name=desc,
+            attachment_type=allure.attachment_type.PNG
+        )
         
         return screenshot_path.absolute()
     
@@ -423,7 +425,7 @@ def login_to_service_via_github_sso(
     service_name: str,
     credentials: dict,
     sso_button_config: dict,
-    success_url_pattern: str = None,
+    success_url_pattern: Optional[str] = None,
     success_check_fn = None
 ):
     """

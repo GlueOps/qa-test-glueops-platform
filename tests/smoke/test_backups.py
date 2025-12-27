@@ -203,7 +203,7 @@ def test_backup_cronjobs_trigger(core_v1, batch_v1, captain_domain, request):
         logger.info(f"  Waiting for {len(triggered_jobs)} job(s)...")
     
     for job_info in triggered_jobs:
-        status = wait_for_job_completion(batch_v1, job_info["name"], backup_namespace, timeout)
+        status = wait_for_job_completion(batch_v1, job_info["name"], backup_namespace)
         
         if status == "timeout":
             problems.append(f"{job_info['cronjob']}: timeout")

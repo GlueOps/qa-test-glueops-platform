@@ -6,6 +6,7 @@ during test automation, including repo creation, file manipulation, and PR manag
 """
 import logging
 import time
+from typing import Optional
 from github import GithubException, Github
 from github.GithubException import UnknownObjectException
 
@@ -108,6 +109,81 @@ def delete_repo_if_exists(org, repo_name: str, verbose: bool = True) -> bool:
                 logger.info(f"Repository {repo_name} does not exist (nothing to delete)")
             return False
         raise
+
+
+def delete_repos_by_topic(org, topic: str, verbose: bool = True) -> int:
+    """
+    Delete all repositories in an organization that have a specific topic.
+    
+    This is used for cleanup of automated test repositories.
+    
+    Args:
+        org: GitHub Organization or User object
+        topic: Topic to search for (e.g., 'createdby-automated-test-delete-me')
+        verbose: Whether to log details
+        
+    Returns:
+        int: Number of repositories deleted
+    """
+    deleted_count = 0
+    
+    if verbose:
+        logger.info(f"Searching for repositories with topic '{topic}'...")
+    
+    try:
+        repos = org.get_repos()
+        
+        for repo in repos:
+            if topic in repo.get_topics():
+                if verbose:
+                    logger.info(f"  Found test repo: {repo.name} - deleting...")
+                try:
+                    repo.delete()
+                    deleted_count += 1
+                    time.sleep(1)
+                except GithubException as e:
+                    logger.warning(f"  ⚠ Failed to delete {repo.name}: {e.status}")
+        
+        if verbose:
+            if deleted_count > 0:
+                logger.info(f"✓ Deleted {deleted_count} test repository/repositories")
+            else:
+                logger.info(f"✓ No test repositories found with topic '{topic}'")
+        
+        return deleted_count
+        
+    except Exception as e:
+        logger.error(f"Error searching for repos by topic: {e}")
+        return deleted_count
+
+
+def set_repo_topics(repo, topics: list, verbose: bool = True):
+    """
+    Set topics on a GitHub repository and verify they are set.
+    
+    Args:
+        repo: GitHub Repository object
+        topics: List of topic strings to set
+        verbose: Whether to log details
+        
+    Raises:
+        RuntimeError: If topics cannot be verified after setting
+    """
+    if verbose:
+        logger.info(f"Setting topics: {', '.join(topics)}")
+    
+    repo.replace_topics(topics)
+    time.sleep(2)
+    
+    # Verify topics were set
+    actual_topics = repo.get_topics()
+    if set(topics) != set(actual_topics):
+        raise RuntimeError(
+            f"Topic verification failed! Expected: {sorted(topics)}, Got: {sorted(actual_topics)}"
+        )
+    
+    if verbose:
+        logger.info(f"✓ Topics verified: {', '.join(actual_topics)}")
 
 
 def create_branch(repo, branch_name: str, source_branch: str = "main", verbose: bool = True):
@@ -238,7 +314,7 @@ def close_pull_request(pr, verbose: bool = True):
         logger.info(f"✓ PR closed: #{pr.number}")
 
 
-def merge_pull_request(pr, merge_method: str = "merge", commit_message: str = None, verbose: bool = True):
+def merge_pull_request(pr, merge_method: str = "merge", commit_message: Optional[str] = None, verbose: bool = True):
     """
     Merge a pull request.
     
@@ -304,7 +380,7 @@ def create_github_file(repo, file_path, content, commit_message, verbose=True, l
     return result
 
 
-def delete_directory_contents(repo, path, verbose=True):
+def delete_directory_contents(repo, path, verbose=True, max_retries=3):
     """
     Recursively delete all contents of a directory in a GitHub repository.
     
@@ -312,6 +388,7 @@ def delete_directory_contents(repo, path, verbose=True):
         repo: GitHub Repository object
         path: Path to the directory to delete
         verbose: Whether to log deletion details (default: True)
+        max_retries: Number of retries for 409 conflicts (default: 3)
     """
     try:
         contents = repo.get_contents(path)
@@ -323,15 +400,30 @@ def delete_directory_contents(repo, path, verbose=True):
             if item.type == "dir":
                 if verbose:
                     logger.info(f"  Deleting directory: {item.path}")
-                delete_directory_contents(repo, item.path, verbose)
+                delete_directory_contents(repo, item.path, verbose, max_retries)
             else:
                 if verbose:
                     logger.info(f"  Deleting file: {item.path}")
-                repo.delete_file(
-                    path=item.path,
-                    message=f"Clear directory: remove {item.path}",
-                    sha=item.sha
-                )
+                
+                # Retry logic for 409 conflicts (file SHA changed)
+                for attempt in range(max_retries):
+                    try:
+                        # Refetch the file to get current SHA
+                        current_file = repo.get_contents(item.path)
+                        repo.delete_file(
+                            path=item.path,
+                            message=f"Clear directory: remove {item.path}",
+                            sha=current_file.sha
+                        )
+                        break  # Success
+                    except GithubException as e:
+                        if e.status == 409 and attempt < max_retries - 1:
+                            if verbose:
+                                logger.info(f"    Retry {attempt + 1}/{max_retries - 1}: SHA conflict, refetching...")
+                            time.sleep(1)
+                            continue
+                        else:
+                            raise
     except GithubException as e:
         if e.status == 404:
             pass
@@ -389,3 +481,191 @@ def clear_apps_directory(repo, verbose=True):
             return 0
         else:
             raise
+
+def get_captain_repo(token: str, repo_url: str, verbose: bool = True):
+    """
+    Get a GitHub repository object for the captain domain repo using a separate token.
+    
+    Args:
+        token: GitHub personal access token with access to the captain repo
+        repo_url: Full GitHub URL (e.g., 'https://github.com/development-captains/nonprod.jupiter.onglueops.rocks')
+        verbose: Whether to log details
+        
+    Returns:
+        tuple: (Github client, Repository object)
+        
+    Raises:
+        ValueError: If repo_url format is invalid
+        GithubException: If repo access fails
+    """
+    import re
+    
+    # Parse the repo URL
+    match = re.match(r'https://github\.com/([^/]+)/([^/]+)', repo_url)
+    if not match:
+        raise ValueError(f"Invalid captain repo URL format: {repo_url}")
+    
+    org_name, repo_name = match.groups()
+    full_name = f"{org_name}/{repo_name}"
+    
+    if verbose:
+        logger.info(f"Connecting to captain repo: {full_name}")
+    
+    # Create GitHub client with the captain token
+    from github import Auth
+    auth = Auth.Token(token)
+    g = Github(auth=auth)
+    
+    # Get the repository
+    repo = g.get_repo(full_name)
+    
+    if verbose:
+        logger.info(f"✓ Connected to captain repo: {repo.html_url}")
+    
+    return g, repo
+
+
+def create_or_update_file(repo, file_path: str, content: str, commit_message: str, verbose: bool = True):
+    """
+    Create a file or update it if it already exists.
+    
+    This handles the GitHub API behavior where create_file fails with 422
+    if the file already exists.
+    
+    Args:
+        repo: GitHub Repository object
+        file_path: Path to the file in the repository
+        content: File content as string
+        commit_message: Git commit message
+        verbose: Whether to log details
+        
+    Returns:
+        dict: Result from create_file or update_file with commit info
+        
+    Raises:
+        RuntimeError: If file creation/update fails validation
+    """
+    try:
+        # Try to create the file first
+        if verbose:
+            logger.info(f"Creating file: {file_path}")
+        
+        result = repo.create_file(
+            path=file_path,
+            message=commit_message,
+            content=content
+        )
+        
+        # Validate the result
+        if not result or 'commit' not in result:
+            raise RuntimeError(f"GitHub API returned invalid response for {file_path}")
+        
+        commit_sha = result['commit'].sha
+        if verbose:
+            logger.info(f"✓ File created: {file_path}")
+            logger.info(f"  Commit SHA: {commit_sha[:8]}")
+            logger.info(f"  URL: {repo.html_url}/blob/{repo.default_branch}/{file_path}")
+        
+        return result
+        
+    except GithubException as e:
+        if e.status == 422:
+            # File exists, need to update instead
+            if verbose:
+                logger.info(f"File exists, updating: {file_path}")
+            
+            # Get the current file to get its SHA
+            existing_file = repo.get_contents(file_path)
+            
+            result = repo.update_file(
+                path=file_path,
+                message=commit_message,
+                content=content,
+                sha=existing_file.sha
+            )
+            
+            # Validate the result
+            if not result or 'commit' not in result:
+                raise RuntimeError(f"GitHub API returned invalid response for {file_path}")
+            
+            commit_sha = result['commit'].sha
+            if verbose:
+                logger.info(f"✓ File updated: {file_path}")
+                logger.info(f"  Commit SHA: {commit_sha[:8]}")
+                logger.info(f"  URL: {repo.html_url}/blob/{repo.default_branch}/{file_path}")
+            
+            return result
+        else:
+            raise
+
+
+def delete_file_if_exists(repo, file_path: str, commit_message: Optional[str] = None, verbose: bool = True) -> bool:
+    """
+    Delete a file from a repository if it exists.
+    
+    Args:
+        repo: GitHub Repository object
+        file_path: Path to the file to delete
+        commit_message: Git commit message (defaults to "Delete {file_path}")
+        verbose: Whether to log details
+        
+    Returns:
+        bool: True if file was deleted, False if it didn't exist
+    """
+    if commit_message is None:
+        commit_message = f"Delete {file_path}"
+    
+    try:
+        # Get the file to get its SHA
+        existing_file = repo.get_contents(file_path)
+        
+        if verbose:
+            logger.info(f"Deleting file: {file_path}")
+        
+        repo.delete_file(
+            path=file_path,
+            message=commit_message,
+            sha=existing_file.sha
+        )
+        
+        if verbose:
+            logger.info(f"✓ File deleted: {file_path}")
+        
+        return True
+        
+    except GithubException as e:
+        if e.status == 404:
+            if verbose:
+                logger.info(f"File does not exist (nothing to delete): {file_path}")
+            return False
+        else:
+            raise
+
+
+def count_apps_in_repo(repo, apps_path='apps'):
+    """
+    Count the number of applications in a deployment-configurations repository.
+    
+    Applications are subdirectories in the apps/ folder. Each subdirectory
+    represents one application that will be discovered by the ApplicationSet.
+    
+    Args:
+        repo: PyGithub Repository object
+        apps_path: Path to apps directory (default: 'apps')
+        
+    Returns:
+        int: Number of app directories found
+        
+    Example:
+        repo = g.get_repo("my-org/deployment-configurations")
+        count = count_apps_in_repo(repo)
+        # Returns 3 if apps/ contains: app1/, app2/, app3/
+    """
+    try:
+        contents = repo.get_contents(apps_path)
+        # Filter for directories only
+        app_dirs = [item for item in contents if item.type == "dir"]
+        return len(app_dirs)
+    except Exception as e:
+        logger.warning(f"Could not count apps in '{apps_path}': {e}")
+        return 0

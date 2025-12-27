@@ -54,6 +54,21 @@ from tests.helpers.browser import ScreenshotManager, complete_github_oauth_flow
 from tests.helpers.utils import display_progress_bar, print_section_header
 ```
 
+### ⚠️ Important: Fixture Apps
+
+The `captain_manifests` fixture automatically creates **3 fixture applications** (`fixture-http-debug-1/2/3`) that persist throughout the test session. When counting expected ArgoCD applications:
+
+```python
+# WRONG - Only counts test-specific apps
+expected_count = num_apps
+
+# CORRECT - Includes fixture apps
+fixture_app_count = captain_manifests['fixture_app_count']  # Always 3
+expected_count = fixture_app_count + num_apps
+```
+
+**Why:** Functions like `wait_for_appset_apps_created_and_healthy()` count ALL applications in the namespace, not just test-specific ones. See `test_deployment_workflow.py` for reference implementation.
+
 ### Module Organization
 
 #### 1. **k8s.py** - Kubernetes Validators & Utilities
@@ -263,6 +278,141 @@ def test_ui_workflow(page, github_credentials, captain_domain, request):
     # Take screenshot
     screenshot_mgr.capture(page, description="After login")
 ```
+
+## Static Analysis & Code Quality
+
+**⚠️ ALWAYS run static analysis before committing or running tests:**
+
+```bash
+make ci                # Run all checks (lint + typecheck) - USE THIS
+make lint              # Run pylint code analysis only
+make typecheck         # Run mypy type checking only
+```
+
+**What these checks catch:**
+- Type errors (wrong function signatures, incompatible types, missing `Optional[]`)
+- Code quality issues (unused imports, undefined variables, too many arguments)
+- Import errors (typos, missing modules)
+
+**Configuration:**
+- `mypy.ini` - Type checking config with **per-module** import ignores (better than `--ignore-missing-imports`)
+- Only `kubernetes.*`, `hvac.*`, and `allure.*` are ignored (no type stubs available)
+- All other imports are fully type-checked to catch bugs early
+
+**Why not use `--ignore-missing-imports`?**
+- Blanket flag silences ALL import errors (hides real bugs)
+- Can't detect typos, wrong module names, or newly available type stubs
+- Per-module config in `mypy.ini` is explicit and maintainable
+
+**Best Practice:**
+```bash
+make ci && make test MARKER=quick  # Validate before running any tests
+```
+
+## Code Quality: DRY Principle (Don't Repeat Yourself)
+
+**⚠️ AI Agents: Actively identify and eliminate code duplication**
+
+### When to Extract Helper Functions
+
+**Identify duplication when you see:**
+- Same logic repeated in 2+ test files
+- Similar calculation patterns (especially with 3+ lines)
+- Repeated import + usage patterns
+- Complex multi-step operations copy-pasted
+
+**Where to place helpers:**
+
+| Type | Location | Example |
+|------|----------|----------|
+| ArgoCD operations | `tests/helpers/argocd.py` | `calculate_expected_app_count()` |
+| Kubernetes validation | `tests/helpers/k8s.py` | `validate_pod_health()` |
+| GitHub operations | `tests/helpers/github.py` | `create_github_file()` |
+| Vault operations | `tests/helpers/vault.py` | `create_multiple_vault_secrets()` |
+| Browser automation | `tests/helpers/browser.py` | `complete_github_oauth_flow()` |
+| General utilities | `tests/helpers/utils.py` | `print_section_header()` |
+
+### DRY Workflow
+
+1. **Spot the pattern** - Notice repeated code across files
+2. **Extract to helper** - Create well-named function with docstring
+3. **Update all usages** - Replace duplicated code with helper call
+4. **Document in module** - Add to module docstring and this guide
+5. **Run static analysis** - `make ci` to verify no breakage
+
+### Example: Before & After
+
+**Before (Repeated in 2+ tests):**
+```python
+# test_deployment_workflow.py
+fixture_app_count = captain_manifests['fixture_app_count']
+expected_total = fixture_app_count + num_apps
+
+# test_externalsecrets.py
+fixture_app_count = captain_manifests['fixture_app_count']
+expected_total = fixture_app_count + num_apps
+```
+
+**After (DRY with helper):**
+```python
+# tests/helpers/argocd.py
+def calculate_expected_app_count(captain_manifests: dict, test_app_count: int) -> int:
+    """Calculate total expected app count including fixture apps."""
+    return captain_manifests['fixture_app_count'] + test_app_count
+
+# Both tests now use:
+from tests.helpers.argocd import calculate_expected_app_count
+expected_total = calculate_expected_app_count(captain_manifests, num_apps)
+```
+
+**Benefits:**
+- ✅ Single source of truth
+- ✅ Easier to update logic (one place)
+- ✅ Self-documenting with clear function name
+- ✅ Type hints catch errors at static analysis time
+
+### AI Agent Checklist
+
+When writing or modifying test code:
+
+- [ ] Search for similar patterns in other test files
+- [ ] If found 2+ times, extract to appropriate helper module
+- [ ] Add type hints and comprehensive docstring
+- [ ] Update all existing usages to use new helper
+- [ ] Run `make ci` to verify type checking passes
+- [ ] Document in AGENTS.md if it's a common pattern
+
+### 🔍 How to Ensure Complete Refactoring
+
+**Problem:** Easy to miss files when refactoring manually
+
+**Solution: Always use grep_search to find ALL occurrences**
+
+```python
+# Step 1: Search for the pattern you're refactoring
+grep_search(query="fixture_app_count = captain_manifests", isRegexp=False)
+
+# Step 2: Review ALL matches (not just 1-2 files)
+# Common mistake: Only fixing files you're currently looking at
+
+# Step 3: Update EVERY occurrence with the DRY helper
+# Use multi_replace_string_in_file for efficiency
+
+# Step 4: Search again to verify none remain
+grep_search(query="fixture_app_count = captain_manifests", isRegexp=False)
+# Should return 0 matches after successful refactoring
+```
+
+**Example: Complete refactoring workflow**
+
+1. **Identify duplication** - User points out repeated code
+2. **Search codebase** - `grep_search` for ALL instances (found in 3 test files)
+3. **Create helper** - Add `calculate_expected_app_count()` to `argocd.py`
+4. **Update ALL files** - Replace pattern in test_deployment_workflow.py, test_externalsecrets.py, AND test_letsencrypt_http01.py
+5. **Verify complete** - Search again to ensure 0 remaining instances
+6. **Validate** - Run `make ci` to catch any errors
+
+**Key insight:** grep_search shows you the FULL scope before you start
 
 ## Common Commands
 
@@ -535,6 +685,19 @@ smoke-tests:
 - `1` - One or more tests failed
 
 ## Common Issues & Troubleshooting
+
+### Fixture Apps Count Mismatch
+
+**Problem:** Test reports "Waiting for 3 apps" but actually sees 6 apps (or wrong count).
+
+**Cause:** Forgot to include `fixture_app_count` in `expected_count` when using `wait_for_appset_apps_created_and_healthy()`.
+
+**Solution:**
+```python
+# Add fixture apps to your expected count
+fixture_app_count = captain_manifests['fixture_app_count']
+expected_total = fixture_app_count + num_apps  # e.g., 3 + 3 = 6
+```
 
 ### Port-Forward Failures
 

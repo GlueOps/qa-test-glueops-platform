@@ -154,7 +154,7 @@ def assert_ingress_dns_valid(networking_v1, platform_namespaces, dns_server='1.1
     return checked_count
 
 
-def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', timeout=600, poll_interval=10, verbose=True):
+def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', verbose=True):
     """
     Wait for multiple certificates to be ready and fail test if any fail.
     
@@ -162,8 +162,6 @@ def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', t
         custom_api: Kubernetes CustomObjectsApi client
         cert_info_list: List of dicts with 'name' and 'cert_name' keys
         namespace: Namespace of certificates (default: 'nonprod')
-        timeout: Max wait time per certificate (default: 600s)
-        poll_interval: Time between checks (default: 10s)
         verbose: Print status updates (default: True)
     
     Returns:
@@ -188,15 +186,13 @@ def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', t
             custom_api,
             cert_name=app['cert_name'],
             namespace=namespace,
-            timeout=timeout,
-            poll_interval=poll_interval,
             verbose=verbose
         )
         
         statuses.append(status)
         
         if not success:
-            error_msg = f"{app['name']}: Certificate not ready after {timeout}s"
+            error_msg = f"{app['name']}: Certificate not ready after timeout"
             if verbose:
                 logger.info(f"      ✗ {error_msg}\n")
             problems.append(error_msg)

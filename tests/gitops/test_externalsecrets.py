@@ -19,7 +19,8 @@ from tests.helpers.assertions import (
 )
 from tests.helpers.k8s import validate_whoami_env_vars
 from tests.helpers.github import create_github_file
-from tests.helpers.utils import display_progress_bar, print_section_header, print_summary_list
+from tests.helpers.argocd import wait_for_appset_apps_created_and_healthy, calculate_expected_app_count
+from tests.helpers.utils import print_section_header, print_summary_list
 from tests.helpers.vault import (
     get_vault_client,
     cleanup_vault_client,
@@ -42,7 +43,8 @@ def generate_random_secrets(num_keys=5):
 
 @pytest.mark.gitops
 @pytest.mark.externalsecrets
-def test_externalsecrets_vault_integration(ephemeral_github_repo, captain_domain, custom_api, core_v1, networking_v1, platform_namespaces):
+@pytest.mark.captain_manifests
+def test_externalsecrets_vault_integration(captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
     """
     Test External Secrets Operator integration with Vault.
     
@@ -60,6 +62,7 @@ def test_externalsecrets_vault_integration(ephemeral_github_repo, captain_domain
     Applications use pattern: externalsecret-test-<guid>.apps.{captain_domain}
     Vault paths: secret/<app-name>/prod and secret/<app-name>/extra
     """
+    captain_domain = captain_manifests['captain_domain']
     repo = ephemeral_github_repo
     vault_client = None
     vault_secret_paths = []
@@ -195,33 +198,36 @@ externalSecret:
             title="Applications to validate"
         )
         
-        # Wait for deployments to be ready
-        print_section_header("STEP 4: Waiting for GitOps sync and deployments")
-        
-        display_progress_bar(
-            wait_time=300,
-            interval=15,
-            description="Waiting for ArgoCD sync, External Secrets sync, and deployments (5 minutes)",
+        # Wait for ApplicationSet to discover and sync the apps we just created
+        expected_total = calculate_expected_app_count(captain_manifests, num_apps)
+        logger.info(f"\n⏳ Waiting for ApplicationSet to sync {num_apps} test-specific app(s) (total: {expected_total})...")
+        apps_ready = wait_for_appset_apps_created_and_healthy(
+            custom_api,
+            namespace=captain_manifests['namespace'],
+            expected_count=expected_total,
             verbose=True
         )
         
+        if not apps_ready:
+            pytest.fail(f"ApplicationSet did not create/sync {num_apps} apps within timeout")
+        
         # Check ArgoCD application health and sync status
-        print_section_header("STEP 5: Checking ArgoCD Application Status")
+        print_section_header("STEP 4: Checking ArgoCD Application Status")
         
         assert_argocd_healthy(custom_api, namespace_filter=None, verbose=True)
         
         # Check pod health across all platform namespaces
-        print_section_header("STEP 6: Checking Pod Health")
+        print_section_header("STEP 5: Checking Pod Health")
         
         assert_pods_healthy(core_v1, platform_namespaces, verbose=True)
         
         # Validate Ingress configuration
-        print_section_header("STEP 7: Validating Ingress Configuration")
+        print_section_header("STEP 6: Validating Ingress Configuration")
         
         total_ingresses = assert_ingress_valid(networking_v1, platform_namespaces, verbose=True)
         
         # Validate DNS resolution for Ingress hosts
-        print_section_header("STEP 8: Validating Ingress DNS Resolution")
+        print_section_header("STEP 7: Validating Ingress DNS Resolution")
         
         checked_count = assert_ingress_dns_valid(
             networking_v1,
@@ -231,7 +237,7 @@ externalSecret:
         )
         
         # Validate environment variables from Vault
-        print_section_header("STEP 9: Validating Environment Variables from Vault")
+        print_section_header("STEP 8: Validating Environment Variables from Vault")
         
         validation_errors = []
         

@@ -16,7 +16,8 @@ from tests.helpers.assertions import (
 )
 from tests.helpers.k8s import validate_http_debug_app
 from tests.helpers.github import create_github_file
-from tests.helpers.utils import display_progress_bar, print_section_header, print_summary_list
+from tests.helpers.argocd import wait_for_appset_apps_created_and_healthy, calculate_expected_app_count
+from tests.helpers.utils import print_section_header, print_summary_list
 from tests.helpers.browser import get_browser_connection, create_incognito_context, cleanup_browser
 
 logger = logging.getLogger(__name__)
@@ -26,12 +27,15 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.gitops
 @pytest.mark.gitops_deployment
-def test_create_custom_deployment_repo(ephemeral_github_repo, captain_domain, custom_api, core_v1, networking_v1, platform_namespaces):
+@pytest.mark.captain_manifests
+def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
     """
     Test GitOps deployment workflow with custom repository.
     
     Creates 3 http-debug applications with dynamic GUIDs and validates end-to-end
     deployment through ArgoCD from a custom deployment repository.
+    
+    Note: Fixture applications are automatically deployed by captain_manifests fixture.
     
     Validates:
     - Repository creation and app deployment
@@ -43,14 +47,28 @@ def test_create_custom_deployment_repo(ephemeral_github_repo, captain_domain, cu
     Applications use pattern: http-debug-<guid>.apps.{captain_domain}
     """
     repo = ephemeral_github_repo
+    captain_domain = captain_manifests['captain_domain']
+    fixture_app_count = captain_manifests['fixture_app_count']
     
     logger.info(f"✓ Captain domain: {captain_domain}")
+    logger.info(f"✓ Fixture apps deployed: {fixture_app_count}")
     
     # Create applications with dynamic GUIDs
-    print_section_header("STEP 1: Creating Applications")
+    print_section_header("STEP 1: Creating Test-Specific Applications")
     
     # Template for values.yaml (based on example-app.yaml)
     def create_values_yaml(app_name, hostname):
+        """Generate values.yaml for test http-debug application.
+        
+        Uses mendhak/http-https-echo container with standard settings.
+        
+        Args:
+            app_name: Name of the application
+            hostname: FQDN for ingress routing
+            
+        Returns:
+            str: Complete values.yaml content as string
+        """
         return f"""#https://github.com/luszczynski/quarkus-debug?tab=readme-ov-file
 image:
   registry: dockerhub.repo.gpkg.io
@@ -105,36 +123,39 @@ podDisruptionBudget:
     
     print_summary_list(
         [{'name': app['name'], 'hostname': app['hostname']} for app in app_info],
-        title="Applications to validate"
+        title="Test-specific applications to validate"
     )
     
-    # Wait for deployments to be ready
-    print_section_header("STEP 2: Waiting for GitOps sync and deployments")
-    
-    display_progress_bar(
-        wait_time=300,
-        interval=15,
-        description="Waiting for ArgoCD sync and deployments (5 minutes)",
+    # Wait for ApplicationSet to discover and sync the apps we just created
+    expected_total = calculate_expected_app_count(captain_manifests, num_apps)
+    logger.info(f"\n⏳ Waiting for ApplicationSet to sync {num_apps} test-specific app(s) (total: {expected_total})...")
+    apps_ready = wait_for_appset_apps_created_and_healthy(
+        custom_api,
+        namespace=captain_manifests['namespace'],
+        expected_count=expected_total,
         verbose=True
     )
     
+    if not apps_ready:
+        pytest.fail(f"ApplicationSet did not create/sync {num_apps} apps within timeout")
+    
     # Check ArgoCD application health and sync status
-    print_section_header("STEP 3: Checking ArgoCD Application Status")
+    print_section_header("STEP 2: Checking ArgoCD Application Status")
     
     assert_argocd_healthy(custom_api, namespace_filter=None, verbose=True)
     
     # Check pod health across all platform namespaces
-    print_section_header("STEP 4: Checking Pod Health")
+    print_section_header("STEP 3: Checking Pod Health")
     
     assert_pods_healthy(core_v1, platform_namespaces, verbose=True)
     
     # Validate Ingress configuration
-    print_section_header("STEP 5: Validating Ingress Configuration")
+    print_section_header("STEP 4: Validating Ingress Configuration")
     
     total_ingresses = assert_ingress_valid(networking_v1, platform_namespaces, verbose=True)
     
     # Validate DNS resolution for Ingress hosts
-    print_section_header("STEP 6: Validating Ingress DNS Resolution")
+    print_section_header("STEP 5: Validating Ingress DNS Resolution")
     
     checked_count = assert_ingress_dns_valid(
         networking_v1,
@@ -144,7 +165,7 @@ podDisruptionBudget:
     )
     
     # Validate JSON responses from each deployed application
-    print_section_header("STEP 7: Validating deployed applications via HTTPS")
+    print_section_header("STEP 6: Validating deployed applications via HTTPS")
     
     validation_errors = []
     
