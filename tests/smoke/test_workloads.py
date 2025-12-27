@@ -2,8 +2,8 @@
 import pytest
 import logging
 import requests
-from lib.port_forward import PortForward
-from lib.k8s_validators import (
+from tests.helpers.port_forward import PortForward
+from tests.helpers.k8s import (
     validate_pod_health,
     validate_failed_jobs,
     validate_ingress_configuration,

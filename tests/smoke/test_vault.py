@@ -2,7 +2,7 @@
 import pytest
 import logging
 import time
-from lib.vault_helpers import (
+from tests.helpers.vault import (
     get_vault_client,
     cleanup_vault_client,
     create_multiple_vault_secrets,

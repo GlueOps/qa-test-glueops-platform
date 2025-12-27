@@ -1,6 +1,6 @@
 """Test Vault UI and GitHub OAuth redirect."""
 import pytest
-from tests.ui.helpers import ScreenshotManager
+from tests.helpers.browser import ScreenshotManager
 
 
 @pytest.mark.oauth_redirect

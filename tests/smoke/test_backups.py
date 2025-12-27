@@ -5,7 +5,7 @@ import time
 import logging
 from datetime import datetime, timezone
 from kubernetes.client.rest import ApiException
-from lib.k8s_utils import wait_for_job_completion, validate_pod_execution
+from tests.helpers.k8s import wait_for_job_completion, validate_pod_execution
 
 logger = logging.getLogger(__name__)
 

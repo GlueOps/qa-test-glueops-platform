@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 import requests
 import logging
-from lib.port_forward import PortForward
+from tests.helpers.port_forward import PortForward
 
 logger = logging.getLogger(__name__)
 

@@ -7,21 +7,20 @@ and validates the secrets are synced as environment variables.
 """
 import pytest
 from pathlib import Path
-import sys
 import uuid
 import logging
 import random
 import string
-from lib.k8s_assertions import (
+from tests.helpers.assertions import (
     assert_argocd_healthy,
     assert_pods_healthy,
     assert_ingress_valid,
     assert_ingress_dns_valid
 )
-from lib.k8s_validators import validate_whoami_env_vars
-from lib.github_helpers import create_github_file
-from lib.test_utils import display_progress_bar, print_section_header, print_summary_list
-from lib.vault_helpers import (
+from tests.helpers.k8s import validate_whoami_env_vars
+from tests.helpers.github import create_github_file
+from tests.helpers.utils import display_progress_bar, print_section_header, print_summary_list
+from tests.helpers.vault import (
     get_vault_client,
     cleanup_vault_client,
     create_multiple_vault_secrets,
@@ -29,9 +28,6 @@ from lib.vault_helpers import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Add parent directory to path to import UI helpers
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def generate_random_secrets(num_keys=5):

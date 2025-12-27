@@ -8,6 +8,9 @@ from github import Github, GithubException
 import time
 import logging
 
+from tests.helpers.k8s import get_platform_namespaces
+from tests.helpers.github import delete_directory_contents
+
 logger = logging.getLogger(__name__)
 
 
@@ -209,7 +212,6 @@ def namespace_filter(request):
 @pytest.fixture(scope="session")
 def platform_namespaces(core_v1, namespace_filter):
     """Get platform namespaces, optionally filtered"""
-    from lib.k8s_utils import get_platform_namespaces
     return get_platform_namespaces(core_v1, namespace_filter)
 
 
@@ -256,10 +258,9 @@ def page(request, captain_domain):
     - Exposes the page to pytest-html-plus for automatic screenshot capture
     - Automatically cleans up browser resources after the test
     
-    Requires: tests.ui.helpers module for browser management
+    Requires: tests.helpers.browser module for browser management
     """
-    # Import here to avoid requiring playwright for non-UI tests
-    from tests.ui.helpers import (
+    from tests.helpers.browser import (
         get_browser_connection,
         create_incognito_context,
         cleanup_browser
@@ -309,7 +310,6 @@ def ephemeral_github_repo(request):
         pytest.skip: If required environment variables are not set
     """
     import re
-    from lib.github_helpers import delete_directory_contents
     
     # Get required environment variables
     github_token = os.environ.get("GITHUB_TOKEN")

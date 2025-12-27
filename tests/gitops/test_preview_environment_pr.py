@@ -15,9 +15,8 @@ import time
 import uuid
 import logging
 from pathlib import Path
-import sys
 
-from lib.github_helpers import (
+from tests.helpers.github import (
     get_github_client,
     create_repo,
     delete_repo,
@@ -28,11 +27,8 @@ from lib.github_helpers import (
     close_pull_request,
     merge_pull_request,
 )
-from lib.test_utils import display_progress_bar, print_section_header
-
-# Add parent directory to path to import UI helpers
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from ui.helpers import ScreenshotManager
+from tests.helpers.utils import display_progress_bar, print_section_header
+from tests.helpers.browser import ScreenshotManager
 
 logger = logging.getLogger(__name__)
 

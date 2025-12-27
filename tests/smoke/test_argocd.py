@@ -1,7 +1,7 @@
 """ArgoCD Application health checks"""
 import pytest
 import logging
-from lib.k8s_validators import validate_all_argocd_apps
+from tests.helpers.k8s import validate_all_argocd_apps
 
 logger = logging.getLogger(__name__)
 

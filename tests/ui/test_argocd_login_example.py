@@ -14,7 +14,7 @@ Required environment variables:
 import os
 import logging
 import pytest
-from tests.ui.helpers import ScreenshotManager
+from tests.helpers.browser import ScreenshotManager
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ def test_argocd_login_via_github(page, github_credentials, captain_domain, reque
     # Handle GitHub OAuth if redirected
     if "github.com" in page.url:
         log.info("Redirected to GitHub - completing OAuth...")
-        from tests.ui.helpers import complete_github_oauth_flow
+        from tests.helpers.browser import complete_github_oauth_flow
         complete_github_oauth_flow(page, github_credentials)
         log.info(f"After OAuth, current URL: {page.url}")
         # Wait for any redirects to complete
@@ -77,7 +77,7 @@ def test_argocd_login_via_github(page, github_credentials, captain_domain, reque
         # If redirected to GitHub again, complete OAuth
         if "github.com" in page.url:
             log.info("Redirected to GitHub again - completing OAuth...")
-            from tests.ui.helpers import complete_github_oauth_flow
+            from tests.helpers.browser import complete_github_oauth_flow
             complete_github_oauth_flow(page, github_credentials)
             log.info(f"After second OAuth, current URL: {page.url}")
             page.wait_for_timeout(3000)

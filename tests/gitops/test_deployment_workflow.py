@@ -6,24 +6,20 @@ through the GlueOps platform.
 """
 import pytest
 from pathlib import Path
-import sys
 import uuid
 import logging
-from lib.k8s_assertions import (
+from tests.helpers.assertions import (
     assert_argocd_healthy,
     assert_pods_healthy,
     assert_ingress_valid,
     assert_ingress_dns_valid
 )
-from lib.k8s_validators import validate_http_debug_app
-from lib.github_helpers import create_github_file
-from lib.test_utils import display_progress_bar, print_section_header, print_summary_list
+from tests.helpers.k8s import validate_http_debug_app
+from tests.helpers.github import create_github_file
+from tests.helpers.utils import display_progress_bar, print_section_header, print_summary_list
+from tests.helpers.browser import get_browser_connection, create_incognito_context, cleanup_browser
 
 logger = logging.getLogger(__name__)
-
-# Add parent directory to path to import UI helpers
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from ui.helpers import get_browser_connection, create_incognito_context, cleanup_browser
 
 
 

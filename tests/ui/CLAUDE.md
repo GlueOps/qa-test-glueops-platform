@@ -2,6 +2,12 @@
 
 **AI Context Document** - Comprehensive guide for UI testing patterns and lessons learned.
 
+**📚 See Also:**
+- **[../../AGENTS.md](../../AGENTS.md)** - Main testing framework documentation
+- **[../../README.md](../../README.md)** - Quick start guide
+
+> **Note**: After December 2025 refactoring, helper imports use `from tests.helpers.browser import ...` instead of `from tests.ui.helpers import ...`
+
 ## Overview
 
 UI tests validate web-based authentication and user interface functionality for GlueOps platform services using Playwright. Tests connect to a Chrome browser via CDP (Chrome DevTools Protocol) for realistic browser automation.

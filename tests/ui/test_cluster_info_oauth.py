@@ -7,7 +7,7 @@ when accessed in incognito mode.
 
 import logging
 import pytest
-from tests.ui.helpers import ScreenshotManager
+from tests.helpers.browser import ScreenshotManager
 
 log = logging.getLogger(__name__)
 

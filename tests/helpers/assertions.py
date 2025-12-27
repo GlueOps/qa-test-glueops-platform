@@ -1,15 +1,23 @@
-"""High-level Kubernetes assertion functions that fail tests on validation errors."""
-import logging
+"""
+Pytest-specific assertion helpers.
+
+These functions wrap validation functions and call pytest.fail() on errors.
+This separation keeps the validation logic pure (no pytest dependency) while
+providing convenient test assertions.
+"""
 import pytest
-from lib.k8s_validators import (
+import logging
+
+from tests.helpers.k8s import (
     validate_all_argocd_apps,
     validate_pod_health,
     validate_ingress_configuration,
     validate_ingress_dns,
     validate_certificate_secret,
-    validate_https_certificate
+    validate_https_certificate,
+    validate_http_debug_app,
+    wait_for_certificate_ready,
 )
-from lib.k8s_utils import wait_for_certificate_ready
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +27,7 @@ def _log_validation_failure(failure_title, problems, max_display=10):
     Helper to log validation failures with consistent formatting.
     
     Args:
-        failure_title: Title for the failure section (e.g., "POD HEALTH VALIDATION FAILED")
+        failure_title: Title for the failure section
         problems: List of problem descriptions
         max_display: Maximum number of problems to display (default: 10)
     """
@@ -39,7 +47,13 @@ def assert_argocd_healthy(custom_api, namespace_filter=None, verbose=True):
     """
     Validate ArgoCD apps and fail test if unhealthy.
     
-    Wrapper around validate_all_argocd_apps that handles logging and test failure.
+    Args:
+        custom_api: Kubernetes CustomObjectsApi client
+        namespace_filter: Optional namespace filter
+        verbose: Print detailed status (default: True)
+    
+    Raises:
+        pytest.fail: If any ArgoCD application is unhealthy
     """
     if verbose:
         logger.info(f"\n🔍 Validating ArgoCD applications...\n")
@@ -58,7 +72,13 @@ def assert_pods_healthy(core_v1, platform_namespaces, verbose=True):
     """
     Validate pod health and fail test if unhealthy.
     
-    Wrapper around validate_pod_health that handles logging and test failure.
+    Args:
+        core_v1: Kubernetes CoreV1Api client
+        platform_namespaces: List of namespaces to check
+        verbose: Print detailed status (default: True)
+    
+    Raises:
+        pytest.fail: If any pod is unhealthy
     """
     if verbose:
         logger.info(f"\n🔍 Validating pod health across platform namespaces...\n")
@@ -77,10 +97,16 @@ def assert_ingress_valid(networking_v1, platform_namespaces, verbose=True):
     """
     Validate ingress configuration and fail test if invalid.
     
-    Wrapper around validate_ingress_configuration that handles logging and test failure.
+    Args:
+        networking_v1: Kubernetes NetworkingV1Api client
+        platform_namespaces: List of namespaces to check
+        verbose: Print detailed status (default: True)
     
     Returns:
         int: Total number of ingresses checked
+    
+    Raises:
+        pytest.fail: If any ingress is invalid
     """
     if verbose:
         logger.info(f"\n🔍 Checking Ingress resources across platform...\n")
@@ -101,10 +127,17 @@ def assert_ingress_dns_valid(networking_v1, platform_namespaces, dns_server='1.1
     """
     Validate ingress DNS resolution and fail test if invalid.
     
-    Wrapper around validate_ingress_dns that handles logging and test failure.
+    Args:
+        networking_v1: Kubernetes NetworkingV1Api client
+        platform_namespaces: List of namespaces to check
+        dns_server: DNS server to query (default: '1.1.1.1')
+        verbose: Print detailed status (default: True)
     
     Returns:
         int: Number of hosts checked
+    
+    Raises:
+        pytest.fail: If any DNS resolution fails
     """
     if verbose:
         logger.info(f"\n🔍 Checking DNS resolution for all Ingress hosts...\n")
@@ -135,6 +168,9 @@ def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', t
     
     Returns:
         list: List of certificate statuses
+    
+    Raises:
+        pytest.fail: If any certificate fails to become ready
     """
     if verbose:
         logger.info(f"\n🔍 Waiting for {len(cert_info_list)} certificate(s) to be issued...\n")
@@ -190,6 +226,9 @@ def assert_tls_secrets_valid(core_v1, secret_info_list, namespace='nonprod', ver
     
     Returns:
         list: List of certificate info dicts
+    
+    Raises:
+        pytest.fail: If any TLS secret is invalid
     """
     if verbose:
         logger.info(f"\n🔍 Validating {len(secret_info_list)} TLS secret(s)...\n")
@@ -241,12 +280,14 @@ def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validat
         validate_cert: Whether to validate HTTPS certificate (default: True)
         validate_app: Whether to validate http-debug app response (default: False)
         verbose: Print status updates (default: True)
+    
+    Raises:
+        pytest.fail: If any HTTPS endpoint validation fails
     """
+    import requests
+    
     if verbose:
         logger.info(f"\n🔍 Testing {len(endpoint_info_list)} HTTPS endpoint(s)...\n")
-    
-    import requests
-    from lib.k8s_validators import validate_http_debug_app
     
     all_problems = []
     
@@ -317,9 +358,9 @@ def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validat
         if verbose:
             logger.info("")
     
-    
     if verbose:
         logger.info(f"\n✓ All {len(endpoint_info_list)} HTTPS endpoints are working")
+    
     if all_problems:
         _log_validation_failure("HTTPS VALIDATION FAILED", all_problems)
         pytest.fail(f"\n❌ HTTPS validation failed with {len(all_problems)} error(s)")

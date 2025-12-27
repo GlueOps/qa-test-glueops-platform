@@ -1,10 +1,24 @@
-"""Low-level Kubernetes validation functions that return problems lists."""
+"""
+Kubernetes helper functions for test validation.
+
+This module consolidates k8s_helpers.py, k8s_utils.py, and k8s_validators.py
+into a single source of truth for Kubernetes-related utilities.
+
+Functions are organized into categories:
+- Namespace utilities
+- Job/Pod validation
+- ArgoCD validation
+- Ingress validation
+- Certificate validation
+- HTTP endpoint validation
+"""
 import time
 import logging
 import ssl
 import socket
 import requests
 import dns.resolver
+from kubernetes import client
 from kubernetes.client.rest import ApiException
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
@@ -13,11 +27,104 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# NAMESPACE UTILITIES
+# =============================================================================
+
+def get_platform_namespaces(core_v1, namespace_filter=None):
+    """
+    Get list of platform namespaces to check.
+    
+    Args:
+        core_v1: Kubernetes CoreV1Api client
+        namespace_filter: Optional namespace filter (if provided, returns only this namespace)
+    
+    Returns:
+        list: List of namespace names
+    """
+    if namespace_filter:
+        return [namespace_filter]
+    all_ns = core_v1.list_namespace()
+    return [ns.metadata.name for ns in all_ns.items 
+            if ns.metadata.name.startswith("glueops-") or ns.metadata.name == "nonprod"]
+
+
+# =============================================================================
+# JOB/POD VALIDATION
+# =============================================================================
+
+def wait_for_job_completion(batch_v1, job_name, namespace, timeout=300):
+    """
+    Wait for a job to complete and return its status.
+    
+    Args:
+        batch_v1: Kubernetes BatchV1Api client
+        job_name: Name of the Job resource
+        namespace: Namespace of the Job
+        timeout: Maximum wait time in seconds (default: 300)
+    
+    Returns:
+        str: 'succeeded', 'failed', or 'timeout'
+    """
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            job = batch_v1.read_namespaced_job(name=job_name, namespace=namespace)
+            if job.status.succeeded and job.status.succeeded > 0:
+                return "succeeded"
+            elif job.status.failed and job.status.failed > 0:
+                return "failed"
+        except ApiException:
+            pass
+        time.sleep(5)
+    
+    return "timeout"
+
+
+def validate_pod_execution(core_v1, job_name, namespace):
+    """
+    Wait for a job to complete and return its status.
+    
+    Args:
+        core_v1: Kubernetes CoreV1Api client
+        job_name: Name of the Job resource
+        namespace: Namespace of the Job
+    
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    pods = core_v1.list_namespaced_pod(namespace=namespace, label_selector=f"job-name={job_name}")
+    
+    if not pods.items:
+        return False, "No pods found for job"
+    
+    pod = pods.items[0]
+    pod_status = pod.status.phase
+    
+    if pod_status == "Succeeded":
+        return True, "Pod completed successfully"
+    elif pod_status == "Failed":
+        return False, "Pod failed"
+    else:
+        return False, f"Pod in unexpected phase: {pod_status}"
+
+
+# =============================================================================
+# ARGOCD VALIDATION
+# =============================================================================
+
 def validate_all_argocd_apps(custom_api, namespace_filter=None, verbose=True):
     """
     Check all ArgoCD applications for health and sync status.
     
-    Returns list of problem descriptions (empty list if all healthy).
+    Args:
+        custom_api: Kubernetes CustomObjectsApi client
+        namespace_filter: Optional namespace filter for ArgoCD apps
+        verbose: Print detailed status for each app (default: True)
+    
+    Returns:
+        list: List of problem descriptions (empty if all healthy)
     """
     if verbose:
         logger.info("Checking ArgoCD applications...")
@@ -76,11 +183,28 @@ def validate_all_argocd_apps(custom_api, namespace_filter=None, verbose=True):
     return problems
 
 
+# =============================================================================
+# POD HEALTH VALIDATION
+# =============================================================================
+
 def validate_pod_health(core_v1, platform_namespaces, verbose=True):
     """
     Check pod health across platform namespaces.
     
-    Returns list of problem descriptions (empty list if all healthy).
+    Checks for critical pod issues:
+    - CrashLoopBackOff - container repeatedly crashing
+    - ImagePullBackOff/ErrImagePull - cannot pull container image  
+    - OOMKilled - container killed due to out of memory
+    - High restart count (>5) - indicates intermittent failures
+    - Failed/Unknown pod phase
+    
+    Args:
+        core_v1: Kubernetes CoreV1Api client
+        platform_namespaces: List of namespaces to check
+        verbose: Print detailed status (default: True)
+    
+    Returns:
+        list: List of problem descriptions (empty if all healthy)
     """
     if verbose:
         logger.info("Checking pod health across platform namespaces...")
@@ -141,7 +265,7 @@ def validate_pod_health(core_v1, platform_namespaces, verbose=True):
             
             if verbose and pod_has_issues:
                 logger.info(f"  ✗ {namespace}/{pod_name}: Issues found")
-            elif verbose:
+            elif not pod_has_issues:
                 healthy_pods += 1
     
     if verbose:
@@ -153,13 +277,24 @@ def validate_pod_health(core_v1, platform_namespaces, verbose=True):
     return problems
 
 
+# =============================================================================
+# JOB VALIDATION
+# =============================================================================
+
 def validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs=None, verbose=True):
     """
     Check for failed Jobs across platform namespaces.
     
-    Returns tuple of (problems, warnings) where:
-    - problems: list of non-excluded failed jobs
-    - warnings: list of excluded failed jobs
+    Args:
+        batch_v1: Kubernetes BatchV1Api client
+        platform_namespaces: List of namespaces to check
+        exclude_jobs: Optional list of job name patterns to exclude from errors
+        verbose: Print detailed status (default: True)
+    
+    Returns:
+        tuple: (problems, warnings) where:
+            - problems: list of non-excluded failed jobs
+            - warnings: list of excluded failed jobs
     """
     if verbose:
         logger.info("Checking for failed jobs...")
@@ -177,8 +312,7 @@ def validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs=None, verbo
             total_jobs += 1
             job_name = job.metadata.name
             
-            # Check job conditions for actual status (more reliable than counts)
-            # Jobs can have failed pod attempts but still succeed overall
+            # Check job conditions for actual status
             is_failed = False
             is_complete = False
             
@@ -189,8 +323,7 @@ def validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs=None, verbo
                     if condition.type == 'Complete' and condition.status == 'True':
                         is_complete = True
             
-            # Only report jobs that are truly failed (not complete and marked as failed)
-            # OR jobs with failures that haven't completed yet
+            # Only report jobs that are truly failed
             if is_failed and not is_complete:
                 failed_jobs += 1
                 failed_count = job.status.failed or 0
@@ -213,11 +346,26 @@ def validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs=None, verbo
     return problems, warnings
 
 
+# =============================================================================
+# INGRESS VALIDATION
+# =============================================================================
+
 def validate_ingress_configuration(networking_v1, platform_namespaces, verbose=True):
     """
     Validate Ingress resources have proper configuration.
     
-    Returns tuple of (problems, total_ingresses).
+    Validates:
+    - Ingress spec exists and has rules defined
+    - All rules have non-empty host values
+    - Load balancer status exists with IP or hostname populated
+    
+    Args:
+        networking_v1: Kubernetes NetworkingV1Api client
+        platform_namespaces: List of namespaces to check
+        verbose: Print detailed status (default: True)
+    
+    Returns:
+        tuple: (problems, total_ingresses)
     """
     if verbose:
         logger.info("Validating Ingress configuration...")
@@ -286,7 +434,18 @@ def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1
     """
     Validate DNS resolution for Ingress hosts.
     
-    Returns tuple of (problems, checked_count).
+    For each ingress with a load balancer IP:
+    - Queries DNS A records for each host using specified DNS server
+    - Compares resolved IPs against expected load balancer IPs
+    
+    Args:
+        networking_v1: Kubernetes NetworkingV1Api client
+        platform_namespaces: List of namespaces to check
+        dns_server: DNS server to query (default: '1.1.1.1')
+        verbose: Print detailed status (default: True)
+    
+    Returns:
+        tuple: (problems, checked_count)
     """
     if verbose:
         logger.info(f"Validating DNS resolution (using {dns_server})...")
@@ -356,12 +515,143 @@ def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1
     return problems, checked_count
 
 
+def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=None, verbose=True, fail_on_none=False):
+    """
+    Get the load balancer IP from ingresses matching the specified class.
+    
+    Args:
+        networking_v1: Kubernetes NetworkingV1Api client
+        ingress_class_name: Ingress class name to filter by
+        namespace: Specific namespace to check (optional)
+        verbose: Whether to log details (default: True)
+        fail_on_none: Whether to fail test if IP not found (default: False)
+    
+    Returns:
+        str: Load balancer IP or None
+    """
+    if verbose:
+        logger.info(f"Searching for load balancer IP (ingressClassName: {ingress_class_name})...")
+    
+    try:
+        if namespace:
+            ingresses = networking_v1.list_namespaced_ingress(namespace=namespace)
+        else:
+            ingresses = networking_v1.list_ingress_for_all_namespaces()
+        
+        for ingress in ingresses.items:
+            if ingress.spec.ingress_class_name != ingress_class_name:
+                continue
+            
+            if (ingress.status and 
+                ingress.status.load_balancer and 
+                ingress.status.load_balancer.ingress):
+                
+                for lb in ingress.status.load_balancer.ingress:
+                    if lb.ip:
+                        if verbose:
+                            logger.info(f"✓ Found load balancer IP: {lb.ip}")
+                        return lb.ip
+        
+        logger.warning(f"No load balancer IP found for ingressClassName: {ingress_class_name}")
+        
+        if fail_on_none:
+            import pytest
+            pytest.fail(f"Could not find load balancer IP for ingressClassName '{ingress_class_name}'")
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Failed to get load balancer IP: {e}")
+        
+        if fail_on_none:
+            import pytest
+            pytest.fail(f"Failed to get load balancer IP: {e}")
+        
+        return None
+
+
+# =============================================================================
+# CERTIFICATE VALIDATION
+# =============================================================================
+
+def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, poll_interval=10, verbose=True):
+    """
+    Wait for a cert-manager Certificate to reach Ready status.
+    
+    Args:
+        custom_api: Kubernetes CustomObjectsApi client
+        cert_name: Name of the Certificate resource
+        namespace: Namespace of the Certificate
+        timeout: Maximum time to wait in seconds (default: 600)
+        poll_interval: Time between checks in seconds (default: 10)
+        verbose: Whether to print progress updates (default: True)
+    
+    Returns:
+        tuple: (success: bool, status: dict)
+    """
+    start_time = time.time()
+    elapsed = 0
+    
+    while elapsed < timeout:
+        try:
+            cert = custom_api.get_namespaced_custom_object(
+                group="cert-manager.io",
+                version="v1",
+                namespace=namespace,
+                plural="certificates",
+                name=cert_name
+            )
+            
+            conditions = cert.get('status', {}).get('conditions', [])
+            
+            for condition in conditions:
+                if condition.get('type') == 'Ready':
+                    if condition.get('status') == 'True':
+                        if verbose:
+                            logger.info(f"      ✓ Certificate Ready (took {int(elapsed)}s)")
+                        return True, cert.get('status', {})
+                    else:
+                        reason = condition.get('reason', 'Unknown')
+                        message = condition.get('message', 'No details')
+                        if verbose:
+                            logger.info(f"      ⏳ Status: {reason} - {message[:80]}")
+            
+            if verbose and not any(c.get('type') == 'Ready' for c in conditions):
+                logger.info(f"      ⏳ Waiting for Ready condition... ({int(elapsed)}s elapsed)")
+            
+        except ApiException as e:
+            if e.status == 404:
+                if verbose:
+                    logger.info(f"      ⏳ Certificate not found yet... ({int(elapsed)}s elapsed)")
+            else:
+                if verbose:
+                    logger.info(f"      ⚠ API error: {e}")
+        
+        time.sleep(poll_interval)
+        elapsed = time.time() - start_time
+    
+    if verbose:
+        logger.info(f"      ✗ Certificate not ready after {timeout}s")
+    
+    return False, {}
+
+
 def validate_certificate_secret(core_v1, secret_name, namespace, expected_hostname=None, verbose=True):
     """
     Validate TLS secret contains valid certificate.
     
-    Returns tuple of (problems, cert_info_dict).
+    Args:
+        core_v1: Kubernetes CoreV1Api client
+        secret_name: Name of the TLS secret
+        namespace: Namespace of the secret
+        expected_hostname: Expected hostname in certificate SAN (optional)
+        verbose: Print detailed status (default: True)
+    
+    Returns:
+        tuple: (problems, cert_info_dict)
     """
+    import base64
+    
     problems = []
     cert_info = {}
     
@@ -373,7 +663,6 @@ def validate_certificate_secret(core_v1, secret_name, namespace, expected_hostna
             return problems, cert_info
         
         # Decode and parse certificate
-        import base64
         cert_pem = base64.b64decode(secret.data['tls.crt'])
         cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
         
@@ -435,27 +724,31 @@ def validate_https_certificate(url, expected_hostname=None, verbose=True):
     """
     Validate HTTPS certificate via SSL connection.
     
-    Returns tuple of (problems, response_info).
+    Args:
+        url: HTTPS URL to test
+        expected_hostname: Expected hostname in certificate (optional)
+        verbose: Print detailed status (default: True)
+    
+    Returns:
+        tuple: (problems, response_info)
     """
+    from urllib.parse import urlparse
+    
     problems = []
     response_info = {}
     
     try:
-        from urllib.parse import urlparse
         parsed = urlparse(url)
         hostname = parsed.hostname
         port = parsed.port or 443
         
-        # Create SSL context
         context = ssl.create_default_context()
         
-        # Connect and get certificate
         with socket.create_connection((hostname, port), timeout=10) as sock:
             with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                 cert_der = ssock.getpeercert(binary_form=True)
                 cert = x509.load_der_x509_certificate(cert_der, default_backend())
                 
-                # Extract certificate info
                 subject = cert.subject
                 issuer = cert.issuer
                 not_after = cert.not_valid_after_utc
@@ -479,7 +772,6 @@ def validate_https_certificate(url, expected_hostname=None, verbose=True):
                     'sans': san_names
                 }
                 
-                # Validate hostname
                 check_hostname = expected_hostname or hostname
                 if check_hostname not in san_names and check_hostname != common_name:
                     problems.append(f"Hostname mismatch: expected '{check_hostname}', cert CN: {common_name}, SANs: {san_names}")
@@ -499,11 +791,24 @@ def validate_https_certificate(url, expected_hostname=None, verbose=True):
     return problems, response_info
 
 
+# =============================================================================
+# HTTP ENDPOINT VALIDATION
+# =============================================================================
+
 def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3, retry_delays=None, verbose=True):
     """
     Validate mendhak/http-https-echo application response.
     
-    Returns tuple of (problems, response_data).
+    Args:
+        url: HTTPS URL to test
+        expected_hostname: Expected hostname in response
+        app_name: App name for error messages (defaults to hostname)
+        max_retries: Number of retry attempts (default: 3)
+        retry_delays: List of delay seconds between retries
+        verbose: Print detailed status (default: True)
+    
+    Returns:
+        tuple: (problems, response_data)
     """
     problems = []
     response_data = {}
@@ -578,7 +883,7 @@ def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3
                     time.sleep(retry_delays[attempt])
                     continue
             
-            # Success - exit retry loop
+            # Success
             break
             
         except requests.exceptions.SSLError as e:
@@ -609,28 +914,22 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
     """
     Validate environment variables in traefik/whoami application response.
     
-    Makes GET request to {url}?env=true and validates that expected environment
-    variables appear in the text response with correct values.
-    
     Args:
-        url: Application URL (e.g., "https://myapp.example.com")
+        url: Application URL
         expected_env_vars: Dict of env var names to expected values
         app_name: Application name for logging
         max_retries: Maximum number of retry attempts
-        retry_delays: List of delays (seconds) between retries
+        retry_delays: List of delays between retries
         verbose: Enable detailed logging
     
     Returns:
-        Tuple of (problems_list, env_vars_dict)
-        - problems_list: List of validation error strings (empty if all valid)
-        - env_vars_dict: Dict of all environment variables found in response
+        tuple: (problems_list, env_vars_dict)
     """
     if retry_delays is None:
         retry_delays = [10, 30, 60]
     
     problems = []
     
-    # Ensure we have enough retry delays
     while len(retry_delays) < max_retries - 1:
         retry_delays.append(retry_delays[-1] if retry_delays else 30)
     
@@ -639,7 +938,6 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
             if verbose and attempt > 1:
                 logger.info(f"      Retry {attempt}/{max_retries}...")
             
-            # Make request with ?env=true parameter
             request_url = f"{url}?env=true"
             if verbose:
                 logger.info(f"      GET {request_url}")
@@ -660,16 +958,13 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
                     problems.append(f"{app_name}: HTTP {response.status_code}")
                     return problems, {}
             
-            # Parse text response - env vars appear after blank line at the end
             text = response.text
             if verbose:
                 logger.info(f"      ✓ Response received, parsing environment variables...")
             
-            # Find environment variables section (after headers, separated by blank line)
             lines = text.split('\n')
             env_vars = {}
             
-            # Skip to the environment variables section (after blank line)
             found_env_section = False
             for line in lines:
                 line = line.strip()
@@ -684,7 +979,6 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
             if verbose:
                 logger.info(f"      ✓ Found {len(env_vars)} environment variables")
             
-            # Validate expected environment variables
             missing_vars = []
             wrong_values = []
             

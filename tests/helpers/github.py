@@ -1,4 +1,9 @@
-"""GitHub helper functions for GitOps testing."""
+"""
+GitHub helper functions for GitOps testing.
+
+This module provides utilities for interacting with GitHub repositories
+during test automation, including repo creation, file manipulation, and PR management.
+"""
 import logging
 import time
 from github import GithubException, Github
@@ -30,7 +35,7 @@ def create_repo(org, repo_name: str, description: str = "Test repository", priva
         org: GitHub Organization object
         repo_name: Name for the new repository
         description: Repository description
-        private: Whether the repo should be private (default: False for public)
+        private: Whether the repo should be private (default: False)
         verbose: Whether to log creation details
         
     Returns:
@@ -43,10 +48,9 @@ def create_repo(org, repo_name: str, description: str = "Test repository", priva
         name=repo_name,
         description=description,
         private=private,
-        auto_init=True  # Creates with README so we have a commit
+        auto_init=True
     )
     
-    # Wait for repo to be fully initialized
     time.sleep(2)
     
     if verbose:
@@ -90,7 +94,7 @@ def delete_repo_if_exists(org, repo_name: str, verbose: bool = True) -> bool:
         if verbose:
             logger.info(f"Found existing repository: {repo_name} - deleting...")
         existing_repo.delete()
-        time.sleep(2)  # Give GitHub API time to process deletion
+        time.sleep(2)
         if verbose:
             logger.info(f"✓ Repository deleted: {repo_name}")
         return True
@@ -122,11 +126,9 @@ def create_branch(repo, branch_name: str, source_branch: str = "main", verbose: 
     if verbose:
         logger.info(f"Creating branch: {branch_name} from {source_branch}")
     
-    # Get the SHA of the source branch
     source_ref = repo.get_branch(source_branch)
     source_sha = source_ref.commit.sha
     
-    # Create the new branch
     new_ref = repo.create_git_ref(
         ref=f"refs/heads/{branch_name}",
         sha=source_sha
@@ -182,10 +184,10 @@ def create_pull_request(repo, title: str, body: str, head_branch: str, base_bran
         verbose: Whether to log details
         
     Returns:
-        github.PullRequest.PullRequest: The created PR (has .html_url for browser navigation)
+        github.PullRequest.PullRequest: The created PR
         
     Raises:
-        GithubException: If PR creation fails (logs details before raising)
+        GithubException: If PR creation fails
     """
     if verbose:
         logger.info(f"Creating PR: {title} ({head_branch} -> {base_branch})")
@@ -210,16 +212,11 @@ def create_pull_request(repo, title: str, body: str, head_branch: str, base_bran
         logger.error(f"   Base branch: {base_branch}")
         logger.error(f"   Error code: {e.status}")
         logger.error(f"   Error message: {e.data.get('message', str(e))}")
-        if 'documentation_url' in e.data:
-            logger.error(f"   Documentation: {e.data['documentation_url']}")
         
-        # Common troubleshooting hints
         if e.status == 403:
             logger.error(f"   💡 Troubleshooting hints:")
-            logger.error(f"      - Check GitHub token has 'repo' scope (not just 'public_repo')")
-            logger.error(f"      - If org uses SSO, authorize the token at:")
-            logger.error(f"        Settings → Developer settings → Personal access tokens → Configure SSO")
-            logger.error(f"      - Consider using fine-grained tokens if classic tokens are restricted")
+            logger.error(f"      - Check GitHub token has 'repo' scope")
+            logger.error(f"      - If org uses SSO, authorize the token")
         
         raise
 
@@ -247,7 +244,7 @@ def merge_pull_request(pr, merge_method: str = "merge", commit_message: str = No
     
     Args:
         pr: GitHub PullRequest object
-        merge_method: Merge method - 'merge', 'squash', or 'rebase' (default: merge)
+        merge_method: Merge method - 'merge', 'squash', or 'rebase'
         commit_message: Optional custom commit message
         verbose: Whether to log details
         
@@ -257,7 +254,6 @@ def merge_pull_request(pr, merge_method: str = "merge", commit_message: str = No
     if verbose:
         logger.info(f"Merging PR: #{pr.number} (method: {merge_method})")
     
-    # Build merge arguments - only include commit_message if provided
     merge_kwargs = {"merge_method": merge_method}
     if commit_message is not None:
         merge_kwargs["commit_message"] = commit_message
@@ -276,7 +272,7 @@ def create_github_file(repo, file_path, content, commit_message, verbose=True, l
     
     Args:
         repo: GitHub Repository object
-        file_path: Path to the file (e.g., "apps/myapp/values.yaml")
+        file_path: Path to the file
         content: File content as string
         commit_message: Git commit message
         verbose: Whether to log creation details (default: True)
@@ -338,7 +334,6 @@ def delete_directory_contents(repo, path, verbose=True):
                 )
     except GithubException as e:
         if e.status == 404:
-            # Already deleted or doesn't exist
             pass
         else:
             raise
@@ -368,7 +363,6 @@ def clear_apps_directory(repo, verbose=True):
         if verbose:
             logger.info(f"Found {items_count} items in apps/ directory")
         
-        # Delete all contents within the apps/ folder
         for item in apps_contents:
             if item.type == "dir":
                 if verbose:

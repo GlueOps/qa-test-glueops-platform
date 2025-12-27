@@ -1,6 +1,20 @@
-# GlueOps PaaS Testing Framework
+# GlueOps Test Suite - AI Context
 
-**AI Context Document** - See [AGENTS.md](AGENTS.md) for quick reference guide.
+**👉 See [AGENTS.md](AGENTS.md) for the comprehensive AI agent guide.**
+
+This document has been consolidated into AGENTS.md for easier maintenance.
+
+## Quick Links
+
+- **[AGENTS.md](AGENTS.md)** - Complete guide for AI agents (architecture, patterns, usage)
+- **[tests/ui/CLAUDE.md](tests/ui/CLAUDE.md)** - Detailed UI testing guide with Playwright
+- **[README.md](README.md)** - User-facing quick start guide
+- **[PLAN.md](PLAN.md)** - Roadmap and future enhancements
+
+---
+
+**Last Updated**: December 27, 2025  
+**Note**: All comprehensive documentation is now in AGENTS.md
 
 ## Project Overview
 

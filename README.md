@@ -2,6 +2,11 @@
 
 Comprehensive test suite for validating GlueOps PaaS platform deployments using pytest.
 
+**📚 Documentation:**
+- **[AGENTS.md](AGENTS.md)** - Comprehensive guide for AI agents and developers (architecture, patterns, troubleshooting)
+- **[tests/ui/CLAUDE.md](tests/ui/CLAUDE.md)** - Detailed UI testing guide with Playwright
+- **[PLAN.md](PLAN.md)** - Roadmap and future enhancements
+
 ## Quick Start
 
 ```bash

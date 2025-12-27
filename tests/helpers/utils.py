@@ -1,4 +1,9 @@
-"""Common utility functions for tests."""
+"""
+Common utility functions for tests.
+
+This module provides general-purpose utilities like progress bars,
+section headers, and formatted output that can be used across test suites.
+"""
 import time
 import logging
 from datetime import datetime

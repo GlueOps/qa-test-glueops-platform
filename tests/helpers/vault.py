@@ -1,4 +1,9 @@
-"""Vault helper functions for secret management"""
+"""
+Vault helper functions for secret management.
+
+This module provides utilities for interacting with HashiCorp Vault
+during test automation, including secret creation, reading, and cleanup.
+"""
 import json
 import random
 import logging
@@ -14,22 +19,21 @@ except ImportError:
     hvac = None
     urllib3 = None
 
-from lib.port_forward import PortForward
+from tests.helpers.port_forward import PortForward
 
 
 def get_vault_root_token(captain_domain):
-    """Extract Vault root token from terraform state file.
+    """
+    Extract Vault root token from terraform state file.
     
     Reads terraform state from:
     /workspaces/glueops/{captain_domain}/terraform/vault/configuration/terraform.tfstate
     
-    Searches for aws_s3_object.vault_access data source and parses
-    the body JSON to extract root_token.
-    
     Args:
         captain_domain: Domain name used in directory path
     
-    Returns: Vault root token string
+    Returns:
+        str: Vault root token
     
     Raises:
         FileNotFoundError: If terraform.tfstate file doesn't exist
@@ -47,7 +51,6 @@ def get_vault_root_token(captain_domain):
     with open(tfstate_path, 'r') as f:
         tfstate = json.load(f)
     
-    # Find the vault_access data source
     logger.info(f"  🔍 Searching for vault_access in terraform state...")
     for resource in tfstate.get('resources', []):
         if (resource.get('type') == 'aws_s3_object' and 
@@ -67,18 +70,8 @@ def get_vault_root_token(captain_domain):
 
 
 def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault_service="vault", verbose=True):
-    """Create authenticated Vault client with kubectl port-forward.
-    
-    Establishes port-forward to Vault service and creates hvac client.
-    
-    Process:
-    1. Extracts root token from terraform state
-    2. Creates port-forward to vault:8200 service
-    3. Creates hvac.Client with token authentication (SSL verification disabled)
-    4. Verifies authentication
-    
-    The port-forward is attached to the client object (_port_forward attribute)
-    and must be cleaned up with cleanup_vault_client() after use.
+    """
+    Create authenticated Vault client with kubectl port-forward.
     
     Args:
         captain_domain: Domain for locating terraform state
@@ -86,7 +79,8 @@ def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault
         vault_service: Kubernetes service name (default: vault)
         verbose: Print detailed progress messages (default: True)
     
-    Returns: Authenticated hvac.Client with _port_forward attached
+    Returns:
+        hvac.Client: Authenticated client with _port_forward attached
     
     Raises:
         ImportError: If hvac library not installed
@@ -102,7 +96,6 @@ def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault
     
     token = get_vault_root_token(captain_domain)
     
-    # Use port-forward context manager
     if verbose:
         logger.info(f"  🔌 Establishing port-forward to {vault_namespace}/{vault_service}:8200...")
     
@@ -113,7 +106,6 @@ def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault
     if verbose:
         logger.info(f"  ✓ Port-forward established on localhost:{port_forward.local_port}")
     
-    # Disable SSL warnings for local connections
     if urllib3:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     
@@ -129,17 +121,14 @@ def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault
     if verbose:
         logger.info(f"  ✓ Successfully authenticated with Vault\n")
     
-    # Attach port_forward to client so it stays alive
     client._port_forward = port_forward
     
     return client
 
 
 def cleanup_vault_client(client, verbose=True):
-    """Cleanup Vault client and terminate port-forward.
-    
-    Closes the port-forward process attached to the client.
-    Must be called after get_vault_client() to avoid leaving kubectl processes running.
+    """
+    Cleanup Vault client and terminate port-forward.
     
     Args:
         client: hvac.Client returned from get_vault_client()
@@ -152,15 +141,15 @@ def cleanup_vault_client(client, verbose=True):
         if verbose:
             logger.info(f"  ✓ Port-forward closed\n")
 
+
 @contextmanager
 def vault_client_context(captain_domain, vault_namespace="glueops-core-vault", verbose=True):
-    """Context manager for Vault client with automatic cleanup.
+    """
+    Context manager for Vault client with automatic cleanup.
     
     Usage:
         with vault_client_context(captain_domain, verbose=True) as client:
-            # Use vault client
             create_vault_secret(client, "path", {"key": "value"})
-        # Cleanup happens automatically
     
     Args:
         captain_domain: Domain name
@@ -168,30 +157,29 @@ def vault_client_context(captain_domain, vault_namespace="glueops-core-vault", v
         verbose: Print status messages (default: True)
     
     Yields:
-        hvac.Client: Authenticated Vault client with port_forward attribute
+        hvac.Client: Authenticated Vault client
     """
     client = None
     try:
-        client = get_vault_client(captain_domain, vault_namespace, verbose)
+        client = get_vault_client(captain_domain, vault_namespace, verbose=verbose)
         yield client
     finally:
         if client:
             cleanup_vault_client(client, verbose)
 
+
 def create_vault_secret(client, path, data, mount_point='secret'):
-    """Create or update a secret in Vault KV v2.
+    """
+    Create or update a secret in Vault KV v2.
     
     Args:
         client: Authenticated hvac.Client
-        path: Secret path (e.g., "myapp/config")
+        path: Secret path
         data: Dictionary of secret data
         mount_point: KV mount point (default: "secret")
     
     Returns:
         dict: Response from Vault API
-    
-    Raises:
-        Exception: If secret creation fails
     """
     return client.secrets.kv.v2.create_or_update_secret(
         path=path,
@@ -201,7 +189,8 @@ def create_vault_secret(client, path, data, mount_point='secret'):
 
 
 def read_vault_secret(client, path, mount_point='secret', raise_on_deleted_version=False):
-    """Read a secret from Vault KV v2.
+    """
+    Read a secret from Vault KV v2.
     
     Args:
         client: Authenticated hvac.Client
@@ -211,9 +200,6 @@ def read_vault_secret(client, path, mount_point='secret', raise_on_deleted_versi
     
     Returns:
         dict: Secret data
-    
-    Raises:
-        Exception: If secret read fails or doesn't exist
     """
     return client.secrets.kv.v2.read_secret_version(
         path=path,
@@ -223,15 +209,13 @@ def read_vault_secret(client, path, mount_point='secret', raise_on_deleted_versi
 
 
 def delete_vault_secret(client, path, mount_point='secret'):
-    """Delete a secret and all its versions from Vault KV v2.
+    """
+    Delete a secret and all its versions from Vault KV v2.
     
     Args:
         client: Authenticated hvac.Client
         path: Secret path
         mount_point: KV mount point (default: "secret")
-    
-    Raises:
-        Exception: If deletion fails
     """
     client.secrets.kv.v2.delete_metadata_and_all_versions(
         path=path,
@@ -240,19 +224,17 @@ def delete_vault_secret(client, path, mount_point='secret'):
 
 
 def create_multiple_vault_secrets(client, secret_configs, mount_point='secret', verbose=False):
-    """Create multiple secrets in Vault with error tracking.
+    """
+    Create multiple secrets in Vault with error tracking.
     
     Args:
         client: Authenticated hvac.Client
         secret_configs: List of dicts with 'path' and 'data' keys
-                       Example: [{'path': 'app/config', 'data': {'key': 'value'}}, ...]
         mount_point: KV mount point (default: "secret")
         verbose: Print progress messages (default: False)
     
     Returns:
         tuple: (created_paths, failures)
-               created_paths: List of successfully created paths
-               failures: List of error messages for failed creations
     """
     created_paths = []
     failures = []
@@ -289,7 +271,8 @@ def create_multiple_vault_secrets(client, secret_configs, mount_point='secret', 
 
 
 def delete_multiple_vault_secrets(client, paths, mount_point='secret', verbose=False):
-    """Delete multiple secrets from Vault with error tracking.
+    """
+    Delete multiple secrets from Vault with error tracking.
     
     Args:
         client: Authenticated hvac.Client
@@ -299,8 +282,6 @@ def delete_multiple_vault_secrets(client, paths, mount_point='secret', verbose=F
     
     Returns:
         tuple: (deleted_paths, failures)
-               deleted_paths: List of successfully deleted paths
-               failures: List of error messages for failed deletions
     """
     deleted_paths = []
     failures = []
@@ -335,13 +316,14 @@ def delete_multiple_vault_secrets(client, paths, mount_point='secret', verbose=F
 
 
 def verify_vault_secrets(client, paths, mount_point='secret', sample_size=None, verbose=False):
-    """Verify that secrets exist and are readable.
+    """
+    Verify that secrets exist and are readable.
     
     Args:
         client: Authenticated hvac.Client
         paths: List of secret paths to verify
         mount_point: KV mount point (default: "secret")
-        sample_size: If provided, only verify a random sample of this size
+        sample_size: If provided, only verify a random sample
         verbose: Print progress messages (default: False)
     
     Returns:
