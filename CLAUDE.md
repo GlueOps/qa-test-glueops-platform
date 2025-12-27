@@ -1,6 +1,6 @@
 # GlueOps PaaS Testing Framework
 
-**AI Context Document** - Comprehensive guide for understanding and working with this codebase.
+**AI Context Document** - See [AGENTS.md](AGENTS.md) for quick reference guide.
 
 ## Project Overview
 
@@ -560,20 +560,21 @@ See [PLAN.md](PLAN.md) for comprehensive roadmap including:
 
 ---
 
-**Last Updated**: December 25, 2025
-**Version**: 1.1.0
+**Last Updated**: December 26, 2025
+**Version**: 1.2.0
 **Maintainer**: GlueOps Platform Team
 
 ## Documentation Structure
 
 This codebase uses category-specific AI context documents:
 
-- **[CLAUDE.md](CLAUDE.md)** (this file) - Main testing framework overview
+- **[AGENTS.md](AGENTS.md)** - Quick reference for AI agents (library architecture, patterns, commands)
+- **[CLAUDE.md](CLAUDE.md)** (this file) - Comprehensive testing framework overview
 - **[tests/ui/CLAUDE.md](tests/ui/CLAUDE.md)** - Detailed UI testing guide with Playwright
 - **[README.md](README.md)** - User-facing quick start and usage guide
 
-**Why separate CLAUDE.md files?**
+**Why separate files?**
+- AGENTS.md provides concise patterns and commands for AI agents
+- CLAUDE.md contains full details for deep understanding
 - UI tests have fundamentally different patterns than API/K8s tests
-- Each category has unique setup requirements and debugging approaches  
 - Focused documentation makes it easier to find relevant information
-- Keeps main CLAUDE.md at manageable size while providing deep dives where needed

@@ -119,7 +119,7 @@ def test_vault_secret_creation(captain_domain, request):
             logger.info("="*70)
             logger.info("STEP 4: Cleanup")
             logger.info("="*70)
-            cleanup_failures = delete_multiple_vault_secrets(
+            deleted_paths, cleanup_failures = delete_multiple_vault_secrets(
                 client, created_paths, verbose=True
             )
             

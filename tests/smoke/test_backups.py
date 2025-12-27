@@ -210,9 +210,9 @@ def test_backup_cronjobs_trigger(core_v1, batch_v1, captain_domain, request):
         elif status == "failed":
             problems.append(f"{job_info['cronjob']}: job failed")
         else:
-            issues = validate_pod_execution(core_v1, job_info["name"], backup_namespace)
-            if issues:
-                problems.append(f"{job_info['cronjob']}: {', '.join(issues)}")
+            success, message = validate_pod_execution(core_v1, job_info["name"], backup_namespace)
+            if not success:
+                problems.append(f"{job_info['cronjob']}: {message}")
     
     assert not problems, (
         f"{len(problems)} triggered backup job issue(s) (triggered: {len(triggered_jobs)} jobs):\n" +

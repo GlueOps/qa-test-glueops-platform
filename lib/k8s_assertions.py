@@ -41,11 +41,17 @@ def assert_argocd_healthy(custom_api, namespace_filter=None, verbose=True):
     
     Wrapper around validate_all_argocd_apps that handles logging and test failure.
     """
+    if verbose:
+        logger.info(f"\n🔍 Validating ArgoCD applications...\n")
+    
     problems = validate_all_argocd_apps(custom_api, namespace_filter, verbose)
     
     if problems:
         _log_validation_failure("ARGOCD VALIDATION FAILED", problems)
         pytest.fail(f"\n❌ ArgoCD validation failed with {len(problems)} error(s)")
+    
+    if verbose:
+        logger.info(f"\n✓ All ArgoCD applications are Healthy and Synced")
 
 
 def assert_pods_healthy(core_v1, platform_namespaces, verbose=True):
@@ -54,11 +60,17 @@ def assert_pods_healthy(core_v1, platform_namespaces, verbose=True):
     
     Wrapper around validate_pod_health that handles logging and test failure.
     """
+    if verbose:
+        logger.info(f"\n🔍 Validating pod health across platform namespaces...\n")
+    
     problems = validate_pod_health(core_v1, platform_namespaces, verbose)
     
     if problems:
         _log_validation_failure("POD HEALTH VALIDATION FAILED", problems)
         pytest.fail(f"\n❌ Pod health validation failed with {len(problems)} error(s)")
+    
+    if verbose:
+        logger.info(f"\n✓ All pods are healthy")
 
 
 def assert_ingress_valid(networking_v1, platform_namespaces, verbose=True):
@@ -70,11 +82,17 @@ def assert_ingress_valid(networking_v1, platform_namespaces, verbose=True):
     Returns:
         int: Total number of ingresses checked
     """
+    if verbose:
+        logger.info(f"\n🔍 Checking Ingress resources across platform...\n")
+    
     problems, total_ingresses = validate_ingress_configuration(networking_v1, platform_namespaces, verbose)
     
     if problems:
         _log_validation_failure("INGRESS CONFIGURATION VALIDATION FAILED", problems)
         pytest.fail(f"\n❌ Ingress configuration validation failed with {len(problems)} error(s)")
+    
+    if verbose:
+        logger.info(f"\n✓ All {total_ingresses} Ingress resources are properly configured")
     
     return total_ingresses
 
@@ -88,11 +106,17 @@ def assert_ingress_dns_valid(networking_v1, platform_namespaces, dns_server='1.1
     Returns:
         int: Number of hosts checked
     """
+    if verbose:
+        logger.info(f"\n🔍 Checking DNS resolution for all Ingress hosts...\n")
+    
     problems, checked_count = validate_ingress_dns(networking_v1, platform_namespaces, dns_server, verbose)
     
     if problems:
         _log_validation_failure("DNS RESOLUTION VALIDATION FAILED", problems)
         pytest.fail(f"\n❌ DNS validation failed with {len(problems)} error(s)")
+    
+    if verbose:
+        logger.info(f"\n✓ All {checked_count} Ingress hosts resolve correctly via DNS")
     
     return checked_count
 
@@ -112,6 +136,9 @@ def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', t
     Returns:
         list: List of certificate statuses
     """
+    if verbose:
+        logger.info(f"\n🔍 Waiting for {len(cert_info_list)} certificate(s) to be issued...\n")
+    
     problems = []
     statuses = []
     
@@ -145,6 +172,9 @@ def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', t
         _log_validation_failure("CERTIFICATE ISSUANCE FAILED", problems)
         pytest.fail(f"\n❌ Certificate validation failed with {len(problems)} error(s)")
     
+    if verbose:
+        logger.info(f"\n✓ All {len(cert_info_list)} certificates issued successfully")
+    
     return statuses
 
 
@@ -161,6 +191,9 @@ def assert_tls_secrets_valid(core_v1, secret_info_list, namespace='nonprod', ver
     Returns:
         list: List of certificate info dicts
     """
+    if verbose:
+        logger.info(f"\n🔍 Validating {len(secret_info_list)} TLS secret(s)...\n")
+    
     all_problems = []
     cert_infos = []
     
@@ -193,6 +226,9 @@ def assert_tls_secrets_valid(core_v1, secret_info_list, namespace='nonprod', ver
         _log_validation_failure("TLS SECRET VALIDATION FAILED", all_problems)
         pytest.fail(f"\n❌ TLS secret validation failed with {len(all_problems)} error(s)")
     
+    if verbose:
+        logger.info(f"\n✓ All {len(secret_info_list)} TLS secrets are valid")
+    
     return cert_infos
 
 
@@ -206,6 +242,9 @@ def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validat
         validate_app: Whether to validate http-debug app response (default: False)
         verbose: Print status updates (default: True)
     """
+    if verbose:
+        logger.info(f"\n🔍 Testing {len(endpoint_info_list)} HTTPS endpoint(s)...\n")
+    
     import requests
     from lib.k8s_validators import validate_http_debug_app
     
@@ -278,6 +317,9 @@ def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validat
         if verbose:
             logger.info("")
     
+    
+    if verbose:
+        logger.info(f"\n✓ All {len(endpoint_info_list)} HTTPS endpoints are working")
     if all_problems:
         _log_validation_failure("HTTPS VALIDATION FAILED", all_problems)
         pytest.fail(f"\n❌ HTTPS validation failed with {len(all_problems)} error(s)")

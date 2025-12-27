@@ -52,7 +52,7 @@ def validate_pod_execution(core_v1, job_name, namespace):
         return False, f"Pod in unexpected phase: {pod_status}"
 
 
-def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=None, verbose=True):
+def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=None, verbose=True, fail_on_none=False):
     """
     Get the load balancer IP from ingresses matching the specified class.
     
@@ -61,9 +61,10 @@ def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=No
         ingress_class_name: Ingress class name to filter by (e.g., 'public', 'glueops-platform')
         namespace: Specific namespace to check (optional, checks all if None)
         verbose: Whether to log details (default: True)
+        fail_on_none: Whether to fail test if IP not found (default: False)
     
     Returns:
-        str: Load balancer IP or None if not found
+        str: Load balancer IP or None if not found (raises pytest.fail if fail_on_none=True and IP not found)
     """
     if verbose:
         logger.info(f"Searching for load balancer IP (ingressClassName: {ingress_class_name})...")
@@ -92,10 +93,20 @@ def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=No
                         return lb.ip
         
         logger.warning(f"No load balancer IP found for ingressClassName: {ingress_class_name}")
+        
+        if fail_on_none:
+            import pytest
+            pytest.fail(f"Could not find load balancer IP for ingressClassName '{ingress_class_name}'")
+        
         return None
         
     except Exception as e:
         logger.error(f"Failed to get load balancer IP: {e}")
+        
+        if fail_on_none:
+            import pytest
+            pytest.fail(f"Failed to get load balancer IP: {e}")
+        
         return None
 
 

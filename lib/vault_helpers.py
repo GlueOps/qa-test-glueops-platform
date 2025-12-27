@@ -3,6 +3,7 @@ import json
 import random
 import logging
 from pathlib import Path
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,31 @@ def cleanup_vault_client(client, verbose=True):
         if verbose:
             logger.info(f"  ✓ Port-forward closed\n")
 
+@contextmanager
+def vault_client_context(captain_domain, vault_namespace="glueops-core-vault", verbose=True):
+    """Context manager for Vault client with automatic cleanup.
+    
+    Usage:
+        with vault_client_context(captain_domain, verbose=True) as client:
+            # Use vault client
+            create_vault_secret(client, "path", {"key": "value"})
+        # Cleanup happens automatically
+    
+    Args:
+        captain_domain: Domain name
+        vault_namespace: Vault namespace (default: "glueops-core-vault")
+        verbose: Print status messages (default: True)
+    
+    Yields:
+        hvac.Client: Authenticated Vault client with port_forward attribute
+    """
+    client = None
+    try:
+        client = get_vault_client(captain_domain, vault_namespace, verbose)
+        yield client
+    finally:
+        if client:
+            cleanup_vault_client(client, verbose)
 
 def create_vault_secret(client, path, data, mount_point='secret'):
     """Create or update a secret in Vault KV v2.
@@ -272,8 +298,11 @@ def delete_multiple_vault_secrets(client, paths, mount_point='secret', verbose=F
         verbose: Print progress messages (default: False)
     
     Returns:
-        list: List of error messages for failed deletions
+        tuple: (deleted_paths, failures)
+               deleted_paths: List of successfully deleted paths
+               failures: List of error messages for failed deletions
     """
+    deleted_paths = []
     failures = []
     total = len(paths)
     
@@ -283,6 +312,7 @@ def delete_multiple_vault_secrets(client, paths, mount_point='secret', verbose=F
     for idx, path in enumerate(paths, 1):
         try:
             delete_vault_secret(client, path, mount_point)
+            deleted_paths.append(path)
             
             if verbose and idx % 10 == 0:
                 percentage = (idx / total) * 100
@@ -295,12 +325,13 @@ def delete_multiple_vault_secrets(client, paths, mount_point='secret', verbose=F
                 logger.info(f"     ✗ Failed: {error_msg}")
     
     if verbose:
-        success_count = total - len(failures)
-        logger.info(f"  ✓ Deleted {success_count}/{total} secrets successfully")
+        success_count = len(deleted_paths)
         if failures:
-            logger.info(f"  ✗ Failed to delete {len(failures)} secrets")
+            logger.info(f"  ⚠️  Deleted {success_count}/{total} secrets ({len(failures)} failed)")
+        else:
+            logger.info(f"  ✓ Successfully deleted {success_count} secrets")
     
-    return failures
+    return deleted_paths, failures
 
 
 def verify_vault_secrets(client, paths, mount_point='secret', sample_size=None, verbose=False):

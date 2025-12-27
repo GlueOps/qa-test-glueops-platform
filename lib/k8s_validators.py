@@ -603,3 +603,118 @@ def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3
                 time.sleep(retry_delays[attempt])
     
     return problems, response_data
+
+
+def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries=3, retry_delays=None, verbose=True):
+    """
+    Validate environment variables in traefik/whoami application response.
+    
+    Makes GET request to {url}?env=true and validates that expected environment
+    variables appear in the text response with correct values.
+    
+    Args:
+        url: Application URL (e.g., "https://myapp.example.com")
+        expected_env_vars: Dict of env var names to expected values
+        app_name: Application name for logging
+        max_retries: Maximum number of retry attempts
+        retry_delays: List of delays (seconds) between retries
+        verbose: Enable detailed logging
+    
+    Returns:
+        Tuple of (problems_list, env_vars_dict)
+        - problems_list: List of validation error strings (empty if all valid)
+        - env_vars_dict: Dict of all environment variables found in response
+    """
+    if retry_delays is None:
+        retry_delays = [10, 30, 60]
+    
+    problems = []
+    
+    # Ensure we have enough retry delays
+    while len(retry_delays) < max_retries - 1:
+        retry_delays.append(retry_delays[-1] if retry_delays else 30)
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            if verbose and attempt > 1:
+                logger.info(f"      Retry {attempt}/{max_retries}...")
+            
+            # Make request with ?env=true parameter
+            request_url = f"{url}?env=true"
+            if verbose:
+                logger.info(f"      GET {request_url}")
+            
+            response = requests.get(request_url, timeout=30, verify=True)
+            
+            if verbose:
+                logger.info(f"      Status: {response.status_code}")
+            
+            if response.status_code != 200:
+                if attempt < max_retries:
+                    delay = retry_delays[attempt - 1]
+                    if verbose:
+                        logger.info(f"      ⏳ Waiting {delay}s before retry...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    problems.append(f"{app_name}: HTTP {response.status_code}")
+                    return problems, {}
+            
+            # Parse text response - env vars appear after blank line at the end
+            text = response.text
+            if verbose:
+                logger.info(f"      ✓ Response received, parsing environment variables...")
+            
+            # Find environment variables section (after headers, separated by blank line)
+            lines = text.split('\n')
+            env_vars = {}
+            
+            # Skip to the environment variables section (after blank line)
+            found_env_section = False
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    found_env_section = True
+                    continue
+                
+                if found_env_section and '=' in line:
+                    key, _, value = line.partition('=')
+                    env_vars[key] = value
+            
+            if verbose:
+                logger.info(f"      ✓ Found {len(env_vars)} environment variables")
+            
+            # Validate expected environment variables
+            missing_vars = []
+            wrong_values = []
+            
+            for key, expected_value in expected_env_vars.items():
+                if key not in env_vars:
+                    missing_vars.append(key)
+                elif env_vars[key] != expected_value:
+                    wrong_values.append(f"{key} (expected: {expected_value}, got: {env_vars[key]})")
+            
+            if missing_vars:
+                problems.append(f"{app_name}: Missing env vars: {', '.join(missing_vars)}")
+            
+            if wrong_values:
+                problems.append(f"{app_name}: Wrong values: {', '.join(wrong_values)}")
+            
+            if verbose and not problems:
+                logger.info(f"      ✓ All {len(expected_env_vars)} expected env vars validated")
+            
+            return problems, env_vars
+        
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries:
+                delay = retry_delays[attempt - 1]
+                if verbose:
+                    logger.info(f"      ⚠ Request failed: {str(e)}")
+                    logger.info(f"      ⏳ Waiting {delay}s before retry...")
+                time.sleep(delay)
+            else:
+                problems.append(f"{app_name}: Request failed after {max_retries} retries - {str(e)}")
+                return problems, {}
+    
+    problems.append(f"{app_name}: Failed to validate after {max_retries} attempts")
+    return problems, {}

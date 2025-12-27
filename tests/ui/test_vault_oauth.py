@@ -9,11 +9,19 @@ def test_vault_github_oauth_redirect(page, captain_domain, request):
     """
     Test Vault redirects to GitHub OAuth login in incognito mode.
     
-    - Uses incognito browser context
-    - Navigates to Vault
-    - Verifies redirect to https://github.com/login
-    - Screenshots captured manually using ScreenshotManager
-    - Supports BrowserBase and local Chrome
+    Validates that unauthenticated access to Vault triggers OAuth2 flow
+    and redirects to GitHub login page.
+    
+    Environment Variables:
+        CAPTAIN_DOMAIN: Cluster domain (e.g., 'nonprod.example.com')
+    
+    Timeouts:
+        - Navigation: 120 seconds
+        - OAuth redirect wait: 3 seconds
+    
+    Fails if final URL does not contain 'github.com/login'.
+    
+    Cluster Impact: READ-ONLY (browser navigation only)
     """
     # Navigate to Vault
     vault_url = f"https://vault.{captain_domain}"

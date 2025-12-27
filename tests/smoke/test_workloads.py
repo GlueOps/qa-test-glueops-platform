@@ -63,11 +63,9 @@ def test_failed_jobs(batch_v1, platform_namespaces):
     """Check for failed Jobs across platform namespaces.
     
     Validates Job resources for failure count (status.failed > 0).
-    Any failed job causes test to FAIL unless in exclusion list.
+    All failed jobs cause test to FAIL - no exclusions configured.
     
-    Configure exclusions via pytest.ini or command-line to exclude specific job patterns.
-    
-    Fails if any non-excluded jobs have status.failed > 0.
+    Fails if any jobs have status.failed > 0.
     
     Cluster Impact: READ-ONLY (queries job status)
     """
@@ -140,9 +138,13 @@ def test_ingress_dns(networking_v1, platform_namespaces):
     """Verify ingress hosts resolve to correct load balancer IPs via DNS.
     
     For each ingress with a load balancer IP:
-    - Queries DNS A records for each host using 1.1.1.1 (Cloudflare DNS)
+    - Queries DNS A records for each host using Cloudflare DNS (1.1.1.1)
     - Compares resolved IPs against expected load balancer IPs
-    - Fails if host doesn't exist (NXDOMAIN), has no A record, or resolves to wrong IP
+    
+    Fails if:
+    - Host doesn't exist (NXDOMAIN)
+    - Host has no A record
+    - Host resolves to wrong IP
     
     Cluster Impact: READ-ONLY (queries ingress resources + external DNS)
     """
@@ -173,13 +175,18 @@ def test_ingress_dns(networking_v1, platform_namespaces):
 def test_ingress_oauth2_redirect(networking_v1, platform_namespaces, captain_domain):
     """Verify ingresses have OAuth2 redirect annotations and actually redirect via HTTP.
     
-    Validates OAuth2 protection for ingresses:
-    - Checks nginx.ingress.kubernetes.io/auth-url annotation points to oauth2.{captain_domain}
-    - Checks nginx.ingress.kubernetes.io/auth-signin annotation points to oauth2.{captain_domain}
-    - Makes HTTP request to ingress host and verifies redirect (301/302/307/308) to OAuth2 URL
+    Validates OAuth2 protection for ingresses with class 'glueops-platform':
+    - Checks nginx.ingress.kubernetes.io/auth-url points to oauth2.{captain_domain}
+    - Checks nginx.ingress.kubernetes.io/auth-signin points to oauth2.{captain_domain}
+    - Makes HTTP request and verifies redirect (301/302/307/308) to OAuth2 URL
     - Accepts 401/403 auth challenges as valid (protected but different auth method)
     
-    Skips ingresses not matching class "glueops-platform".
+    Exceptions (skipped ingresses):
+    - oauth2-proxy
+    - glueops-dex
+    
+    Timeouts:
+    - HTTP request: 5 seconds
     
     Cluster Impact: READ-ONLY (queries ingress resources + external HTTP requests)
     """

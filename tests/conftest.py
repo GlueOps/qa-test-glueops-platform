@@ -279,7 +279,7 @@ def page(request, captain_domain):
 
 
 @pytest.fixture
-def ephemeral_github_repo():
+def ephemeral_github_repo(request):
     """
     Create an ephemeral GitHub repository from a template for testing.
     
@@ -288,14 +288,19 @@ def ephemeral_github_repo():
     2. Parses template and destination GitHub URLs
     3. Deletes the target test repository if it exists (cleanup safety)
     4. Creates a new repository from the template
-    5. If template URL contains a tag, updates main branch to point to that tag's commit
+    5. Clears specified paths/files if requested via pytest marker
     6. Yields the repository object for test use
-    7. Deletes the repository in teardown
+    7. Resets the repository in teardown
     
     Environment Variables:
         GITHUB_TOKEN: GitHub personal access token with repo permissions
         TEMPLATE_REPO_URL: Full GitHub URL (e.g., 'https://github.com/org/repo/releases/tag/0.1.0')
         DESTINATION_REPO_URL: Full destination URL (e.g., 'https://github.com/dest-org/dest-repo')
+    
+    Pytest Marker:
+        Use @pytest.mark.clear_repo_path("path/to/clear") to clear specific paths
+        Default: clears "apps" directory if marker not specified
+        Use @pytest.mark.clear_repo_path(None) to skip clearing
     
     Yields:
         github.Repository.Repository: The created repository object
@@ -304,6 +309,7 @@ def ephemeral_github_repo():
         pytest.skip: If required environment variables are not set
     """
     import re
+    from lib.github_helpers import delete_directory_contents
     
     # Get required environment variables
     github_token = os.environ.get("GITHUB_TOKEN")
@@ -336,7 +342,9 @@ def ephemeral_github_repo():
     test_repo_name = dest_repo
     
     # Authenticate with GitHub
-    g = Github(github_token)
+    from github import Auth
+    auth = Auth.Token(github_token)
+    g = Github(auth=auth)
     
     # Get destination org/user
     try:
@@ -389,6 +397,25 @@ def ephemeral_github_repo():
         except GithubException as e:
             logger.info(f"⚠ Warning: Could not fetch tag '{target_tag}': {e.status} - {e.data.get('message', str(e))}")
             logger.info(f"  Continuing with template's HEAD commit")
+    
+    # Log repository information for test visibility
+    logger.info(f"\n✓ Repository ready: {test_repo.full_name}")
+    logger.info(f"✓ Repository URL: {test_repo.html_url}\n")
+    
+    # Clear specified path if requested
+    clear_marker = request.node.get_closest_marker("clear_repo_path")
+    if clear_marker is not None:
+        clear_path = clear_marker.args[0] if clear_marker.args else "apps"
+    else:
+        clear_path = "apps"  # Default to clearing apps directory
+    
+    if clear_path is not None:
+        logger.info(f"Clearing repository path: {clear_path}")
+        try:
+            delete_directory_contents(test_repo, clear_path, verbose=True)
+            logger.info(f"✓ Path cleared: {clear_path}\n")
+        except Exception as e:
+            logger.warning(f"⚠️  Could not clear path '{clear_path}': {e}\n")
     
     # Yield the repository for test use
     yield test_repo

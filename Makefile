@@ -1,6 +1,6 @@
 .PHONY: help test build clean clean-reports clean-baselines collect serve discover markers fixtures \
         check-env setup-kubeconfig setup-reports setup-ui-reports \
-        quick api ui gitops full
+        quick api ui gitops gitops-deployment letsencrypt preview-environments full
 
 # Docker run base configuration
 DOCKER_RUN = docker run --rm --network host
@@ -34,11 +34,14 @@ help:
 	@echo "GlueOps Test Suite (Pytest)"
 	@echo ""
 	@echo "Quick Commands (shortcuts):"
-	@echo "  make quick             - Run quick tests (<5s)"
-	@echo "  make api               - Run API/K8s tests (smoke + write)"
-	@echo "  make ui                - Run UI tests with retries"
-	@echo "  make gitops            - Run GitOps tests with retries"
-	@echo "  make full              - Run full suite with retries"
+	@echo "  make quick                - Run quick tests (<5s)"
+	@echo "  make api                  - Run API/K8s tests (smoke + write)"
+	@echo "  make ui                   - Run UI tests with retries"
+	@echo "  make gitops               - Run GitOps tests with retries"
+	@echo "  make gitops-deployment    - Run GitOps deployment workflow test"
+	@echo "  make letsencrypt          - Run LetsEncrypt certificate tests"
+	@echo "  make preview-environments - Run preview environment PR workflow tests"
+	@echo "  make full                 - Run full suite with retries"
 	@echo ""
 	@echo "Advanced Usage (unified command):"
 	@echo "  make test                                - Run all tests"
@@ -130,8 +133,17 @@ ui:
 gitops:
 	@$(MAKE) test MARKER=gitops RERUNS=2 SUITE=gitops
 
+gitops-deployment:
+	@$(MAKE) test MARKER=gitops_deployment RERUNS=1 SUITE=gitops-deployment
+
+externalsecrets:
+	@$(MAKE) test MARKER=externalsecrets RERUNS=0 SUITE=externalsecrets
+
 letsencrypt:
 	@$(MAKE) test MARKER=letsencrypt RERUNS=1 SUITE=letsencrypt
+
+preview-environments:
+	@$(MAKE) test MARKER=preview_environments SUITE=preview-environments
 
 full:
 	@$(MAKE) test RERUNS=2 SUITE=full
