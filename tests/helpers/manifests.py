@@ -185,7 +185,7 @@ spec:
             glueops_app_name: '{{{{ index .path.segments 1 | replace "." "-"  | replace "_" "-" }}}}-{{{{ .path.basenameNormalized }}}}'
 
         repoURL: https://helm.gpkg.io/project-template
-        targetRevision: 0.9.0-rc4
+        targetRevision: 0.9.0-rc5
       - repoURL: {repo_url}
         targetRevision: main
         ref: values

@@ -192,9 +192,11 @@ def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', v
         statuses.append(status)
         
         if not success:
-            error_msg = f"{app['name']}: Certificate not ready after timeout"
+            # Use detailed_error from status if available
+            detailed = status.get('detailed_error', 'Certificate not ready after timeout')
+            error_msg = f"{app['name']}: {detailed}"
             if verbose:
-                logger.info(f"      ✗ {error_msg}\n")
+                logger.info(f"      ✗ Failed\n")
             problems.append(error_msg)
         else:
             if verbose:

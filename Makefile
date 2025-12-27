@@ -154,7 +154,7 @@ clean:
 
 clean-reports:
 	@echo "Removing Allure results and reports..."
-	@rm -rf allure-results allure-report
+	@sudo rm -rf allure-results allure-report
 	@mkdir -p allure-results allure-report
 
 clean-baselines:

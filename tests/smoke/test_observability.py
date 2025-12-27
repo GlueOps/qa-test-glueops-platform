@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 import requests
 import logging
-from tests.helpers.port_forward import PortForward
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +96,7 @@ def load_baseline(baseline_file):
 @pytest.mark.important
 @pytest.mark.readonly
 @pytest.mark.observability
-def test_prometheus_metrics_existence(core_v1, captain_domain):
+def test_prometheus_metrics_existence(core_v1, captain_domain, prometheus_url):
     """Verify all baseline Prometheus metrics still exist (READ-ONLY cluster operation).
     
     This is a READ-ONLY test with respect to the Kubernetes cluster:
@@ -122,49 +121,46 @@ def test_prometheus_metrics_existence(core_v1, captain_domain):
     baseline_dir = "baselines"
     baseline_file = f"{baseline_dir}/prometheus-metrics-baseline.json"
     
-    # Port-forward to Prometheus (read-only connection)
-    with PortForward("glueops-core-kube-prometheus-stack", "kps-prometheus", 9090) as pf:
-        prometheus_url = f"http://127.0.0.1:{pf.local_port}"
+    # Use prometheus_url fixture (port-forward already established)
+    logger.info(f"Querying Prometheus at {prometheus_url} (read-only)")
+    current_metrics = query_all_metrics(prometheus_url)
+    logger.info(f"Found {len(current_metrics)} unique metric names")
+    
+    # First run - create baseline (writes to LOCAL filesystem only)
+    if not os.path.exists(baseline_file):
+        create_baseline(current_metrics, baseline_file, captain_domain, prometheus_url)
+        logger.info(f"✓ Baseline created: {len(current_metrics)} metrics")
+        logger.info(f"  Baseline saved to {baseline_file}")
+        pytest.skip(f"Baseline created with {len(current_metrics)} metrics (rerun to compare)")
+    
+    # Comparison run
+    baseline = load_baseline(baseline_file)
+    baseline_set = set(baseline['metric_names'])
+    current_set = current_metrics
+    
+    logger.info(f"Baseline contains {len(baseline_set)} metric names")
+    
+    missing = baseline_set - current_set
+    new = current_set - baseline_set
+    
+    # Report new metrics (informational)
+    if new:
+        logger.info(f"\nNew metrics detected ({len(new)} total):")
+        # Show first 10 new metrics
+        for metric in sorted(new)[:10]:
+            logger.info(f"  + {metric}")
+        if len(new) > 10:
+            logger.info(f"  ... and {len(new) - 10} more")
+    
+    # Assert no missing metrics
+    if missing:
+        # Show all missing metrics
+        missing_list = sorted(missing)
+        error_msg = f"{len(missing)} metric name(s) missing from baseline:\n"
+        for m in missing_list:
+            error_msg += f"  - {m}\n"
         
-        logger.info(f"Querying Prometheus at {prometheus_url} (read-only)")
-        current_metrics = query_all_metrics(prometheus_url)
-        logger.info(f"Found {len(current_metrics)} unique metric names")
-        
-        # First run - create baseline (writes to LOCAL filesystem only)
-        if not os.path.exists(baseline_file):
-            create_baseline(current_metrics, baseline_file, captain_domain, prometheus_url)
-            logger.info(f"✓ Baseline created: {len(current_metrics)} metrics")
-            logger.info(f"  Baseline saved to {baseline_file}")
-            pytest.skip(f"Baseline created with {len(current_metrics)} metrics (rerun to compare)")
-        
-        # Comparison run
-        baseline = load_baseline(baseline_file)
-        baseline_set = set(baseline['metric_names'])
-        current_set = current_metrics
-        
-        logger.info(f"Baseline contains {len(baseline_set)} metric names")
-        
-        missing = baseline_set - current_set
-        new = current_set - baseline_set
-        
-        # Report new metrics (informational)
-        if new:
-            logger.info(f"\nNew metrics detected ({len(new)} total):")
-            # Show first 10 new metrics
-            for metric in sorted(new)[:10]:
-                logger.info(f"  + {metric}")
-            if len(new) > 10:
-                logger.info(f"  ... and {len(new) - 10} more")
-        
-        # Assert no missing metrics
-        if missing:
-            # Show all missing metrics
-            missing_list = sorted(missing)
-            error_msg = f"{len(missing)} metric name(s) missing from baseline:\n"
-            for m in missing_list:
-                error_msg += f"  - {m}\n"
-            
-            pytest.fail(error_msg)
-        
-        logger.info(f"✓ All {len(baseline_set)} baseline metrics verified" + 
-              (f" ({len(new)} new metrics detected)" if new else ""))
+        pytest.fail(error_msg)
+    
+    logger.info(f"✓ All {len(baseline_set)} baseline metrics verified" + 
+          (f" ({len(new)} new metrics detected)" if new else ""))

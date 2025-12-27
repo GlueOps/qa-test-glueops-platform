@@ -2,7 +2,6 @@
 import pytest
 import logging
 from urllib.parse import urlparse
-from tests.helpers.browser import ScreenshotManager
 
 log = logging.getLogger(__name__)
 
@@ -10,7 +9,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.authenticated
 @pytest.mark.slow
 @pytest.mark.ui
-def test_cluster_info_links(page, github_credentials, captain_domain, request):
+def test_cluster_info_links(page, github_credentials, captain_domain, screenshots):
     """
     Test cluster-info page login and verify all HTTPS links are accessible.
     
@@ -66,11 +65,8 @@ def test_cluster_info_links(page, github_credentials, captain_domain, request):
     
     log.info("✅ Successfully loaded cluster-info page")
     
-    # Initialize screenshot manager - pass request to auto-detect report directory
-    screenshot_manager = ScreenshotManager(test_name="cluster_info_links", request=request)
-    
-    # Capture screenshot of the cluster-info page before clicking links
-    screenshot_manager.capture(page, cluster_info_url, description="Cluster Info Landing Page")
+    # Capture screenshot of the cluster-info page before clicking links (fixture handles summary logging)
+    screenshots.capture(page, cluster_info_url, description="Cluster Info Landing Page")
     log.info("📸 Captured screenshot of cluster-info page")
     
     # Find all HTTPS links on the page
@@ -114,7 +110,7 @@ def test_cluster_info_links(page, github_credentials, captain_domain, request):
             page.wait_for_timeout(5000)
             
             # Capture screenshot using centralized manager
-            screenshot_manager.capture(page, link_url, description=f"{i}. {urlparse(link_url).netloc}")
+            screenshots.capture(page, link_url, description=f"{i}. {urlparse(link_url).netloc}")
             
             log.info(f"✅ Successfully visited: {link_url}")
             
@@ -131,4 +127,3 @@ def test_cluster_info_links(page, github_credentials, captain_domain, request):
                 log.warning(f"Could not return to cluster-info page: {e}")
         
     log.info(f"✅ Completed testing {len(unique_links)} links")
-    screenshot_manager.log_summary()

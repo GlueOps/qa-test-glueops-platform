@@ -63,38 +63,12 @@ def test_letsencrypt_http01_challenge(captain_manifests, ephemeral_github_repo, 
     print_section_header("STEP 2: Creating Applications with LetsEncrypt")
     
     # Template for values.yaml with cert-manager configuration
+    from tests.templates import load_template
+    
     def create_values_yaml(app_name, hostname):
-        return f"""#https://github.com/luszczynski/quarkus-debug?tab=readme-ov-file
-image:
-  registry: dockerhub.repo.gpkg.io
-  repository: mendhak/http-https-echo
-  tag: 37@sha256:f55000d9196bd3c853d384af7315f509d21ffb85de315c26e9874033b9f83e15
-  port: 8080
-service:
-  enabled: true
-deployment:
-  replicas: 1
-  enabled: true
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-ingress:
-  enabled: true
-  ingressClassName: public
-  entries:
-    - name: public
-      hosts:
-        - hostname: {hostname}
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt
-  tls:
-    - secretName: {app_name}
-      hosts:
-        - {hostname}
-podDisruptionBudget:
-  enabled: false
-"""
+        return load_template('letsencrypt-app-values.yaml', 
+                           app_name=app_name, 
+                           hostname=hostname)
     
     # Create 3 applications with dynamic GUIDs
     num_apps = 3

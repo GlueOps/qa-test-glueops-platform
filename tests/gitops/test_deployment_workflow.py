@@ -57,6 +57,8 @@ def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo,
     print_section_header("STEP 1: Creating Test-Specific Applications")
     
     # Template for values.yaml (based on example-app.yaml)
+    from tests.templates import load_template
+    
     def create_values_yaml(app_name, hostname):
         """Generate values.yaml for test http-debug application.
         
@@ -69,31 +71,12 @@ def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo,
         Returns:
             str: Complete values.yaml content as string
         """
-        return f"""#https://github.com/luszczynski/quarkus-debug?tab=readme-ov-file
-image:
-  registry: dockerhub.repo.gpkg.io
-  repository: mendhak/http-https-echo
-  tag: 37@sha256:f55000d9196bd3c853d384af7315f509d21ffb85de315c26e9874033b9f83e15
-  port: 8080
-service:
-  enabled: true
-deployment:
-  replicas: 2
-  enabled: true
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-ingress:
-  enabled: true
-  ingressClassName: public
-  entries:
-    - name: public
-      hosts:
-        - hostname: {hostname}
-podDisruptionBudget:
-  enabled: true
-"""
+        return load_template('http-debug-app-values.yaml',
+                           hostname=hostname,
+                           replicas=2,
+                           cpu='100m',
+                           memory='128Mi',
+                           pdb_enabled='true')
     
     # Create 3 http-debug applications with dynamic GUIDs
     num_apps = 3

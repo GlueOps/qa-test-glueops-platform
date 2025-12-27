@@ -2,7 +2,6 @@
 import pytest
 import logging
 import requests
-from tests.helpers.port_forward import PortForward
 from tests.helpers.k8s import (
     validate_pod_health,
     validate_failed_jobs,
@@ -275,7 +274,7 @@ def test_ingress_oauth2_redirect(networking_v1, platform_namespaces, captain_dom
 @pytest.mark.important
 @pytest.mark.readonly
 @pytest.mark.observability
-def test_alertmanager_alerts(core_v1):
+def test_alertmanager_alerts(core_v1, alertmanager_url):
     """Check for firing alerts in Alertmanager via API.
     
     Connects to Alertmanager via port-forward and queries /api/v2/alerts endpoint.
@@ -291,70 +290,67 @@ def test_alertmanager_alerts(core_v1):
     
     Cluster Impact: READ-ONLY (port-forward + queries Alertmanager API)
     """
-    # Port-forward to Alertmanager
-    with PortForward("glueops-core-kube-prometheus-stack", "kps-alertmanager", 9093) as pf:
-        alertmanager_url = f"http://127.0.0.1:{pf.local_port}"
-        
-        # Query Alertmanager API for alerts
-        response = requests.get(
-            f"{alertmanager_url}/api/v2/alerts",
-            timeout=10
-        )
-        
-        assert response.status_code == 200, f"Alertmanager API returned status {response.status_code}"
-        
-        alerts = response.json()
-        
-        # Filter for firing/active/suppressed alerts
-        firing_alerts = [
-            alert for alert in alerts 
-            if alert.get("status", {}).get("state") in ["active", "firing", "suppressed"]
-        ]
-        
-        # Separate passable alerts from actual issues
-        passable = []
-        problematic = []
-        
-        for alert in firing_alerts:
+    # Use alertmanager_url fixture (port-forward already established)
+    # Query Alertmanager API for alerts
+    response = requests.get(
+        f"{alertmanager_url}/api/v2/alerts",
+        timeout=10
+    )
+    
+    assert response.status_code == 200, f"Alertmanager API returned status {response.status_code}"
+    
+    alerts = response.json()
+    
+    # Filter for firing/active/suppressed alerts
+    firing_alerts = [
+        alert for alert in alerts 
+        if alert.get("status", {}).get("state") in ["active", "firing", "suppressed"]
+    ]
+    
+    # Separate passable alerts from actual issues
+    passable = []
+    problematic = []
+    
+    for alert in firing_alerts:
+        labels = alert.get("labels", {})
+        name = labels.get("alertname", "Unknown")
+        if name in PASSABLE_ALERTS:
+            passable.append(alert)
+        else:
+            problematic.append(alert)
+    
+    # Build output for passable alerts (info only)
+    if passable:
+        logger.info(f"\nExpected alerts (informational, {len(passable)} alert(s)):")
+        for alert in passable:
             labels = alert.get("labels", {})
+            annotations = alert.get("annotations", {})
             name = labels.get("alertname", "Unknown")
-            if name in PASSABLE_ALERTS:
-                passable.append(alert)
-            else:
-                problematic.append(alert)
-        
-        # Build output for passable alerts (info only)
-        if passable:
-            logger.info(f"\nExpected alerts (informational, {len(passable)} alert(s)):")
-            for alert in passable:
-                labels = alert.get("labels", {})
-                annotations = alert.get("annotations", {})
-                name = labels.get("alertname", "Unknown")
-                severity = labels.get("severity", "unknown")
-                summary = annotations.get("summary", "")
-                logger.info(f"  {name} (severity: {severity})")
-                if summary:
-                    logger.info(f"    {summary}")
-        
-        # Build error message for problematic alerts
-        if problematic:
-            problems = []
-            for alert in problematic:
-                labels = alert.get("labels", {})
-                annotations = alert.get("annotations", {})
-                name = labels.get("alertname", "Unknown")
-                severity = labels.get("severity", "unknown")
-                namespace = labels.get("namespace", "")
-                summary = annotations.get("summary", "")
-                
-                if namespace:
-                    alert_line = f"{name} in {namespace} (severity: {severity})"
-                else:
-                    alert_line = f"{name} (severity: {severity})"
-                
-                if summary:
-                    alert_line += f"\n      {summary}"
-                
-                problems.append(alert_line)
+            severity = labels.get("severity", "unknown")
+            summary = annotations.get("summary", "")
+            logger.info(f"  {name} (severity: {severity})")
+            if summary:
+                logger.info(f"    {summary}")
+    
+    # Build error message for problematic alerts
+    if problematic:
+        problems = []
+        for alert in problematic:
+            labels = alert.get("labels", {})
+            annotations = alert.get("annotations", {})
+            name = labels.get("alertname", "Unknown")
+            severity = labels.get("severity", "unknown")
+            namespace = labels.get("namespace", "")
+            summary = annotations.get("summary", "")
             
-            pytest.fail(f"{len(problematic)} firing alert(s):\n  " + "\n  ".join(problems))
+            if namespace:
+                alert_line = f"{name} in {namespace} (severity: {severity})"
+            else:
+                alert_line = f"{name} (severity: {severity})"
+            
+            if summary:
+                alert_line += f"\n      {summary}"
+            
+            problems.append(alert_line)
+        
+        pytest.fail(f"{len(problematic)} firing alert(s):\n  " + "\n  ".join(problems))

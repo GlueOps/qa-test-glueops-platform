@@ -904,6 +904,105 @@ def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=No
 # CERTIFICATE VALIDATION
 # =============================================================================
 
+def _get_certificate_detailed_error(custom_api, cert_name, namespace, cert_message=""):
+    """
+    Fetch detailed error information from CertificateRequest and Order resources.
+    
+    Args:
+        custom_api: Kubernetes CustomObjectsApi client
+        cert_name: Name of the Certificate resource
+        namespace: Namespace of the Certificate
+        cert_message: Basic error message from Certificate status
+    
+    Returns:
+        str: Detailed error message including ACME errors, or cert_message if details unavailable
+    """
+    try:
+        # List CertificateRequests for this certificate
+        cert_requests = custom_api.list_namespaced_custom_object(
+            group="cert-manager.io",
+            version="v1",
+            namespace=namespace,
+            plural="certificaterequests",
+            label_selector=f"cert-manager.io/certificate-name={cert_name}"
+        )
+        
+        if not cert_requests.get('items'):
+            return cert_message
+        
+        # Sort by creation timestamp and get the most recent
+        sorted_requests = sorted(
+            cert_requests['items'],
+            key=lambda x: x['metadata']['creationTimestamp'],
+            reverse=True
+        )
+        latest_request = sorted_requests[0]
+        request_name = latest_request['metadata']['name']
+        
+        # Check CertificateRequest status for error details
+        cr_status = latest_request.get('status', {})
+        cr_conditions = cr_status.get('conditions', [])
+        
+        # Build error message from CertificateRequest
+        cr_error_parts = []
+        for condition in cr_conditions:
+            if condition.get('type') == 'Ready' and condition.get('status') == 'False':
+                reason = condition.get('reason', '')
+                message = condition.get('message', '')
+                if reason or message:
+                    cr_error_parts.append(f"CertificateRequest '{request_name}': {reason} - {message}")
+        
+        # Try to get Order details if referenced
+        order_name = None
+        for condition in cr_conditions:
+            msg = condition.get('message', '')
+            # Look for order name in message (e.g., 'order resource "order-name-123"')
+            if 'order resource' in msg.lower():
+                import re
+                match = re.search(r'order resource ["\']([^"\'\']+)["\']', msg, re.IGNORECASE)
+                if match:
+                    order_name = match.group(1)
+                    break
+        
+        # Fetch Order details if we found a reference
+        order_error = None
+        if order_name:
+            try:
+                order = custom_api.get_namespaced_custom_object(
+                    group="acme.cert-manager.io",
+                    version="v1",
+                    namespace=namespace,
+                    plural="orders",
+                    name=order_name
+                )
+                
+                order_status = order.get('status', {})
+                order_state = order_status.get('state', '')
+                order_reason = order_status.get('reason', '')
+                
+                if order_state == 'errored' or order_reason:
+                    order_error = f"Order '{order_name}' state: {order_state}, reason: {order_reason}"
+                    
+            except ApiException as e:
+                if e.status != 404:
+                    logger.warning(f"Could not fetch Order '{order_name}': {e.status}")
+        
+        # Combine all error information
+        detailed_parts = [cert_message] if cert_message else []
+        detailed_parts.extend(cr_error_parts)
+        if order_error:
+            detailed_parts.append(order_error)
+        
+        return " | ".join(detailed_parts) if detailed_parts else cert_message
+        
+    except ApiException as e:
+        logger.warning(f"Could not fetch detailed error info for certificate '{cert_name}': {e.status}")
+        return cert_message
+    except Exception as e:
+        logger.warning(f"Unexpected error fetching certificate details: {e}")
+        return cert_message
+
+
 def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, poll_interval=10, verbose=True):
     """
     Wait for a cert-manager Certificate to reach Ready status.
@@ -934,17 +1033,66 @@ def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, po
             
             conditions = cert.get('status', {}).get('conditions', [])
             
-            for condition in conditions:
-                if condition.get('type') == 'Ready':
-                    if condition.get('status') == 'True':
-                        if verbose:
-                            logger.info(f"      ✓ Certificate Ready (took {int(elapsed)}s)")
-                        return True, cert.get('status', {})
-                    else:
-                        reason = condition.get('reason', 'Unknown')
-                        message = condition.get('message', 'No details')
-                        if verbose:
-                            logger.info(f"      ⏳ Status: {reason} - {message[:80]}")
+            # Build a map of conditions for easier lookup
+            condition_map = {c.get('type'): c for c in conditions}
+            
+            # Check if certificate is Ready (success case)
+            ready_condition = condition_map.get('Ready')
+            if ready_condition and ready_condition.get('status') == 'True':
+                if verbose:
+                    logger.info(f"      ✓ Certificate Ready (took {int(elapsed)}s)")
+                return True, cert.get('status', {})
+            
+            # Check Issuing condition for terminal failures
+            # When Issuing is False with reason "Failed", cert-manager has given up
+            issuing_condition = condition_map.get('Issuing')
+            if issuing_condition:
+                issuing_status = issuing_condition.get('status')
+                issuing_reason = issuing_condition.get('reason', '')
+                issuing_message = issuing_condition.get('message', 'No details')
+                
+                # Issuing condition with status False and reason Failed = terminal failure
+                if issuing_status == 'False' and issuing_reason in ['Failed', 'InvalidConfiguration', 'Denied']:
+                    detailed_error = _get_certificate_detailed_error(
+                        custom_api,
+                        cert_name,
+                        namespace,
+                        f"Issuing {issuing_reason}: {issuing_message}"
+                    )
+                    
+                    # Always log detailed errors on failure
+                    logger.info(f"      ✗ Certificate FAILED (Issuing condition): {issuing_reason}")
+                    logger.info(f"      📋 Details: {detailed_error}")
+                    
+                    status_with_error = cert.get('status', {})
+                    status_with_error['detailed_error'] = detailed_error
+                    return False, status_with_error
+            
+            # Check Ready condition for other terminal failures
+            # (e.g., configuration issues that prevent issuance from starting)
+            if ready_condition:
+                ready_reason = ready_condition.get('reason', 'Unknown')
+                ready_message = ready_condition.get('message', 'No details')
+                
+                # Some reasons in Ready condition also indicate terminal failures
+                if ready_reason in ['InvalidConfiguration', 'Denied']:
+                    detailed_error = _get_certificate_detailed_error(
+                        custom_api,
+                        cert_name,
+                        namespace,
+                        f"Ready {ready_reason}: {ready_message}"
+                    )
+                    
+                    logger.info(f"      ✗ Certificate FAILED (Ready condition): {ready_reason}")
+                    logger.info(f"      📋 Details: {detailed_error}")
+                    
+                    status_with_error = cert.get('status', {})
+                    status_with_error['detailed_error'] = detailed_error
+                    return False, status_with_error
+                
+                # Not a terminal failure, log progress
+                if verbose:
+                    logger.info(f"      ⏳ Status: {ready_reason} - {ready_message}")
             
             if verbose and not any(c.get('type') == 'Ready' for c in conditions):
                 logger.info(f"      ⏳ Waiting for Ready condition... ({int(elapsed)}s elapsed)")
@@ -960,10 +1108,35 @@ def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, po
         time.sleep(poll_interval)
         elapsed = time.time() - start_time
     
-    if verbose:
-        logger.info(f"      ✗ Certificate not ready after {timeout}s")
+    # Timeout reached - try to get detailed error
+    detailed_error = f"Certificate not ready after {timeout}s"
+    try:
+        cert = custom_api.get_namespaced_custom_object(
+            group="cert-manager.io",
+            version="v1",
+            namespace=namespace,
+            plural="certificates",
+            name=cert_name
+        )
+        conditions = cert.get('status', {}).get('conditions', [])
+        for condition in conditions:
+            if condition.get('type') == 'Ready' and condition.get('status') == 'False':
+                reason = condition.get('reason', 'Unknown')
+                message = condition.get('message', 'No details')
+                detailed_error = _get_certificate_detailed_error(
+                    custom_api,
+                    cert_name,
+                    namespace,
+                    f"Timeout after {timeout}s - Last status: {reason}: {message}"
+                )
+                break
+    except:
+        pass  # Use the basic timeout message
     
-    return False, {}
+    if verbose:
+        logger.info(f"      ✗ {detailed_error}")
+    
+    return False, {'detailed_error': detailed_error}
 
 
 def validate_certificate_secret(core_v1, secret_name, namespace, expected_hostname=None, verbose=True):

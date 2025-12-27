@@ -14,14 +14,13 @@ Required environment variables:
 import os
 import logging
 import pytest
-from tests.helpers.browser import ScreenshotManager
 
 log = logging.getLogger(__name__)
 
 
 @pytest.mark.authenticated
 @pytest.mark.ui
-def test_vault_login_via_github(page, github_credentials, captain_domain, request):
+def test_vault_login_via_github(page, github_credentials, captain_domain, screenshots):
     """
     Test Vault login via GitHub OAuth flow.
     
@@ -100,10 +99,6 @@ def test_vault_login_via_github(page, github_credentials, captain_domain, reques
     
     log.info("✅ Vault secrets page fully loaded")
     
-    # Initialize screenshot manager and capture final state
-    screenshot_manager = ScreenshotManager(test_name="vault_login", request=request)
-    screenshot_manager.capture(page, page.url, description="Vault Secrets Page")
-    
-    # Log summary
-    screenshot_manager.log_summary()
+    # Capture final state using screenshots fixture
+    screenshots.capture(page, page.url, description="Vault Secrets Page")
 

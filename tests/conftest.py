@@ -33,7 +33,66 @@ from tests.helpers.manifests import (
     generate_appset_yaml,
 )
 
+
+class SafeUnicodeFilter(logging.Filter):
+    """Filter to sanitize log messages containing surrogate characters.
+    
+    This prevents UnicodeEncodeError when Allure tries to attach captured logs
+    that contain surrogate characters (U+D800 to U+DFFF) which are invalid in UTF-8.
+    Common sources: binary data in exceptions, improperly decoded responses, etc.
+    """
+    
+    def filter(self, record):
+        """Sanitize the log message to handle surrogate characters."""
+        if isinstance(record.msg, str):
+            # Check if message contains surrogates
+            try:
+                record.msg.encode('utf-8')
+            except UnicodeEncodeError:
+                # Message contains surrogates, sanitize it
+                record.msg = record.msg.encode('utf-8', errors='replace').decode('utf-8')
+        
+        # Also sanitize args if they contain strings with surrogates
+        if record.args:
+            safe_args = []
+            for arg in record.args:
+                if isinstance(arg, str):
+                    try:
+                        arg.encode('utf-8')
+                        safe_args.append(arg)
+                    except UnicodeEncodeError:
+                        safe_args.append(arg.encode('utf-8', errors='replace').decode('utf-8'))
+                else:
+                    safe_args.append(arg)
+            record.args = tuple(safe_args)
+        
+        return True
+
+
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def configure_safe_logging():
+    """Configure logging to handle surrogate characters safely.
+    
+    This fixture runs automatically at session start and installs a filter
+    that prevents UnicodeEncodeError when logging contains invalid UTF-8
+    surrogate characters. This is especially important for Python 3.14+
+    which has stricter UTF-8 validation.
+    """
+    safe_filter = SafeUnicodeFilter()
+    
+    # Add filter to root logger
+    logging.root.addFilter(safe_filter)
+    
+    # Also add to all existing loggers
+    for logger_name in logging.Logger.manager.loggerDict:
+        logger_obj = logging.getLogger(logger_name)
+        if isinstance(logger_obj, logging.Logger):
+            logger_obj.addFilter(safe_filter)
+    
+    yield
 
 
 @pytest.fixture(scope="session")
@@ -318,10 +377,28 @@ def captain_manifests(
         'appset': 'manifests/appset.yaml',
     }
     
-    # Pre-cleanup: Delete existing manifests
-    logger.info("\n📋 Pre-cleanup: Removing existing manifests...")
-    for name, path in manifest_paths.items():
+    # Pre-cleanup: Delete existing manifests in reverse order of creation
+    # CRITICAL: Must delete ApplicationSet first to avoid "appproject not found" errors
+    # When ApplicationSet still exists but AppProject is deleted, ArgoCD reconciliation fails
+    logger.info("\n📋 Pre-cleanup: Removing existing manifests (reverse order of creation)...")
+    
+    # Delete in reverse order of creation
+    for i, (name, path) in enumerate(reversed(list(manifest_paths.items())), 1):
+        logger.info(f"   {i}. Deleting {name}...")
         delete_file_if_exists(captain_repo, path, f"Pre-cleanup: remove {name}", verbose=True)
+        
+        # Wait for captain-manifests to stabilize after each deletion
+        logger.info(f"      Waiting for captain-manifests to stabilize...")
+        app_healthy = wait_for_argocd_app_healthy(
+            custom_api,
+            app_name="captain-manifests",
+            namespace="glueops-core",
+            verbose=False
+        )
+        if not app_healthy:
+            logger.warning(f"      ⚠ captain-manifests did not stabilize, continuing anyway")
+        else:
+            logger.info(f"      ✓ captain-manifests stable")
     
     # Give GitHub API time to process deletions
     time.sleep(2)
@@ -357,7 +434,8 @@ def captain_manifests(
     # Commit manifests to captain repo
     logger.info("\n📤 Committing manifests to captain repo...")
     
-    create_or_update_file(
+    # Create/update all manifest files (function validates and raises exceptions on failure)
+    namespace_result = create_or_update_file(
         captain_repo,
         manifest_paths['namespace'],
         namespace_yaml,
@@ -365,7 +443,7 @@ def captain_manifests(
         verbose=True
     )
     
-    create_or_update_file(
+    appproject_result = create_or_update_file(
         captain_repo,
         manifest_paths['appproject'],
         appproject_yaml,
@@ -373,13 +451,19 @@ def captain_manifests(
         verbose=True
     )
     
-    create_or_update_file(
+    appset_result = create_or_update_file(
         captain_repo,
         manifest_paths['appset'],
         appset_yaml,
         f"Create ApplicationSet manifest for {namespace_name}",
         verbose=True
     )
+    
+    # Log commit SHAs for verification
+    logger.info(f"\n✓ All manifests committed successfully:")
+    logger.info(f"  Namespace:   {namespace_result['commit'].sha[:8]}")
+    logger.info(f"  AppProject:  {appproject_result['commit'].sha[:8]}")
+    logger.info(f"  AppSet:      {appset_result['commit'].sha[:8]}")
     
     # Wait for ArgoCD to sync
     if sync_wait > 0:
@@ -409,6 +493,8 @@ def captain_manifests(
     fixture_apps_metadata = []
     fixture_apps_by_friendly_name = {}
     
+    from tests.templates import load_template
+    
     def create_fixture_values_yaml(app_name, hostname, replicas):
         """Generate values.yaml for fixture http-debug application.
         
@@ -420,33 +506,15 @@ def captain_manifests(
         Returns:
             str: YAML content for values.yaml file
         """
-        return f"""image:
-  registry: dockerhub.repo.gpkg.io
-  repository: mendhak/http-https-echo
-  tag: 37@sha256:f55000d9196bd3c853d384af7315f509d21ffb85de315c26e9874033b9f83e15
-  port: 8080
-service:
-  enabled: true
-deployment:
-  replicas: {replicas}
-  enabled: true
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-ingress:
-  enabled: true
-  ingressClassName: public
-  entries:
-    - name: public
-      hosts:
-        - hostname: {hostname}
-podDisruptionBudget:
-  enabled: true
-"""
+        return load_template('http-debug-app-values.yaml',
+                           hostname=hostname,
+                           replicas=replicas,
+                           cpu='100m',
+                           memory='128Mi',
+                           pdb_enabled='true')
     
-    # Create env-values.yaml (empty for now, but available for customization)
-    env_values_yaml = "# Environment-specific overrides\n"
+    # Load env-values template
+    env_values_yaml = load_template('env-values.yaml')
     
     # Deploy each fixture app
     for config in fixture_app_configs:
@@ -811,8 +879,21 @@ def ephemeral_github_repo(request, deployment_config_template_repo, tenant_githu
             logger.info(f"⚠ Warning: Could not fetch tag '{target_tag}': {e.status} - {e.data.get('message', str(e))}")
             logger.info(f"  Continuing with template's HEAD commit")
     
+    # Give GitHub a moment to propagate deletions and ensure repo is ready
+    logger.info("⏱️  Waiting 2s for GitHub to propagate changes...")
+    time.sleep(2)
+    
+    # Verify repo is actually accessible (refresh to get latest state)
+    try:
+        # Force a fresh API call to verify repo exists and is accessible
+        test_repo_refreshed = g.get_repo(test_repo.full_name)
+        logger.info(f"✓ Repository verified accessible: {test_repo_refreshed.full_name}")
+        test_repo = test_repo_refreshed  # Use the refreshed object
+    except GithubException as e:
+        pytest.fail(f"❌ Repository exists but is not accessible: {e.status} - {e.data.get('message', str(e))}")
+    
     # Log repository information for test visibility
-    logger.info(f"\n✓ Repository ready: {test_repo.full_name}")
+    logger.info(f"✓ Repository ready: {test_repo.full_name}")
     logger.info(f"✓ Repository URL: {test_repo.html_url}\n")
     
     # Yield the repository for test use
@@ -859,6 +940,308 @@ def fixture_apps(captain_manifests):
         'count': captain_manifests['fixture_app_count'],
         'by_friendly_name': captain_manifests['fixture_apps_by_friendly_name']
     }
+
+
+# =============================================================================
+# PORT-FORWARD AND SERVICE CONNECTION FIXTURES
+# =============================================================================
+
+@pytest.fixture
+def prometheus_url():
+    """
+    Port-forward to Prometheus and yield local URL.
+    
+    Automatically establishes kubectl port-forward to Prometheus service
+    and cleans up the connection after the test completes.
+    
+    Returns:
+        str: Local Prometheus URL (e.g., 'http://127.0.0.1:9090')
+    
+    Usage:
+        def test_prometheus_metrics(prometheus_url):
+            response = requests.get(f"{prometheus_url}/api/v1/query?query=up")
+            assert response.status_code == 200
+    """
+    from tests.helpers.port_forward import PortForward
+    
+    with PortForward("glueops-core-kube-prometheus-stack", "kps-prometheus", 9090) as pf:
+        yield f"http://127.0.0.1:{pf.local_port}"
+
+
+@pytest.fixture
+def alertmanager_url():
+    """
+    Port-forward to Alertmanager and yield local URL.
+    
+    Automatically establishes kubectl port-forward to Alertmanager service
+    and cleans up the connection after the test completes.
+    
+    Returns:
+        str: Local Alertmanager URL (e.g., 'http://127.0.0.1:9093')
+    
+    Usage:
+        def test_alertmanager(alertmanager_url):
+            response = requests.get(f"{alertmanager_url}/api/v2/status")
+            assert response.status_code == 200
+    """
+    from tests.helpers.port_forward import PortForward
+    
+    with PortForward("glueops-core-kube-prometheus-stack", "kps-alertmanager", 9093) as pf:
+        yield f"http://127.0.0.1:{pf.local_port}"
+
+
+@pytest.fixture
+def vault_client(captain_domain, request):
+    """
+    Vault client with automatic port-forward and cleanup.
+    
+    Establishes kubectl port-forward to Vault, authenticates, and yields
+    an authenticated hvac.Client. Automatically cleans up port-forward
+    on test completion.
+    
+    Args:
+        captain_domain: Captain domain fixture (injected automatically)
+        request: Pytest request fixture (injected automatically)
+    
+    Returns:
+        hvac.Client: Authenticated Vault client
+    
+    Raises:
+        ImportError: If hvac library not installed
+        pytest.skip: If required environment variables not set
+    
+    Usage:
+        def test_vault_secrets(vault_client):
+            # Create secret
+            vault_client.secrets.kv.v2.create_or_update_secret(
+                path="test/path",
+                secret={"key": "value"}
+            )
+            
+            # Read secret
+            result = vault_client.secrets.kv.v2.read_secret_version(path="test/path")
+            assert result['data']['data']['key'] == 'value'
+    """
+    from tests.helpers.vault import get_vault_client, cleanup_vault_client
+    
+    verbose = request.config.option.verbose > 0
+    vault_namespace = "glueops-core-vault"
+    
+    client = get_vault_client(
+        captain_domain, 
+        vault_namespace=vault_namespace, 
+        verbose=verbose
+    )
+    
+    yield client
+    
+    cleanup_vault_client(client, verbose=verbose)
+
+
+# =============================================================================
+# SCREENSHOT MANAGER FIXTURE
+# =============================================================================
+
+@pytest.fixture
+def screenshots(request):
+    """
+    Screenshot manager with automatic summary logging.
+    
+    Creates a ScreenshotManager configured for the current test and
+    automatically logs a summary of all captured screenshots on teardown.
+    
+    Args:
+        request: Pytest request fixture (injected automatically)
+    
+    Returns:
+        ScreenshotManager: Manager instance for capturing screenshots
+    
+    Usage:
+        def test_ui_flow(page, screenshots):
+            page.goto("https://example.com")
+            screenshots.capture(page, "https://example.com", "Homepage")
+            
+            page.click("button[name='login']")
+            screenshots.capture(page, page.url, "After clicking login")
+            
+            # Summary automatically logged at test end
+    """
+    from tests.helpers.browser import ScreenshotManager
+    
+    # Extract clean test name
+    test_name = request.node.name.replace('test_', '')
+    manager = ScreenshotManager(test_name=test_name, request=request)
+    
+    yield manager
+    
+    manager.log_summary()
+
+
+# =============================================================================
+# AUTHENTICATED BROWSER PAGE FIXTURES
+# =============================================================================
+
+@pytest.fixture
+def authenticated_argocd_page(page, github_credentials, captain_domain):
+    """
+    Browser page authenticated to ArgoCD via GitHub OAuth.
+    
+    Handles the complete OAuth flow including:
+    - Navigating to ArgoCD
+    - Detecting and completing GitHub OAuth login
+    - Handling SSO button clicks
+    - Managing redirects
+    
+    Args:
+        page: Playwright page fixture (injected automatically)
+        github_credentials: GitHub credentials fixture (injected automatically)
+        captain_domain: Captain domain fixture (injected automatically)
+    
+    Returns:
+        Page: Playwright page object authenticated to ArgoCD
+    
+    Usage:
+        def test_argocd_apps(authenticated_argocd_page):
+            # Page is already authenticated and on ArgoCD
+            authenticated_argocd_page.goto(f"https://argocd.{captain_domain}/applications")
+            # ... perform test actions ...
+    """
+    from tests.helpers.browser import complete_github_oauth_flow
+    
+    argocd_url = f"https://argocd.{captain_domain}/applications"
+    
+    # Navigate to ArgoCD
+    page.goto(argocd_url, wait_until="load", timeout=30000)
+    
+    # Handle GitHub OAuth if redirected
+    if "github.com" in page.url:
+        complete_github_oauth_flow(page, github_credentials)
+        page.wait_for_timeout(3000)
+    
+    # If on login page, click SSO button
+    if "/login" in page.url:
+        page.get_by_role("button", name="Log in via GitHub SSO").click()
+        page.wait_for_timeout(5000)
+        
+        if "github.com" in page.url:
+            complete_github_oauth_flow(page, github_credentials)
+            page.wait_for_timeout(3000)
+    
+    # Navigate to ArgoCD one final time to ensure we're there
+    page.goto(argocd_url, wait_until="load", timeout=30000)
+    page.wait_for_timeout(3000)
+    
+    yield page
+
+
+@pytest.fixture
+def authenticated_grafana_page(page, github_credentials, captain_domain):
+    """
+    Browser page authenticated to Grafana via GitHub OAuth.
+    
+    Handles the complete OAuth flow including:
+    - Navigating to Grafana
+    - Detecting and completing GitHub OAuth login
+    - Handling SSO button clicks
+    - Managing redirects
+    
+    Args:
+        page: Playwright page fixture (injected automatically)
+        github_credentials: GitHub credentials fixture (injected automatically)
+        captain_domain: Captain domain fixture (injected automatically)
+    
+    Returns:
+        Page: Playwright page object authenticated to Grafana
+    
+    Usage:
+        def test_grafana_dashboards(authenticated_grafana_page):
+            # Page is already authenticated and on Grafana
+            authenticated_grafana_page.goto(f"https://grafana.{captain_domain}/dashboards")
+            # ... perform test actions ...
+    """
+    from tests.helpers.browser import complete_github_oauth_flow
+    
+    grafana_url = f"https://grafana.{captain_domain}"
+    
+    # Navigate to Grafana
+    page.goto(grafana_url, wait_until="load", timeout=30000)
+    
+    # Handle GitHub OAuth if redirected
+    if "github.com" in page.url:
+        complete_github_oauth_flow(page, github_credentials)
+        page.wait_for_timeout(3000)
+    
+    # If on login page, click SSO button
+    if "/login" in page.url:
+        page.get_by_role("button", name="Log in via GitHub SSO").click()
+        page.wait_for_timeout(5000)
+        
+        if "github.com" in page.url:
+            complete_github_oauth_flow(page, github_credentials)
+            page.wait_for_timeout(3000)
+    
+    # Navigate to Grafana one final time to ensure we're there
+    page.goto(grafana_url, wait_until="load", timeout=30000)
+    page.wait_for_timeout(3000)
+    
+    yield page
+
+
+@pytest.fixture
+def authenticated_vault_page(page, github_credentials, captain_domain):
+    """
+    Browser page authenticated to Vault via GitHub OAuth.
+    
+    Handles the complete OAuth flow including:
+    - Navigating to Vault
+    - Detecting and completing GitHub OAuth login
+    - Handling SSO button clicks
+    - Managing redirects
+    
+    Args:
+        page: Playwright page fixture (injected automatically)
+        github_credentials: GitHub credentials fixture (injected automatically)
+        captain_domain: Captain domain fixture (injected automatically)
+    
+    Returns:
+        Page: Playwright page object authenticated to Vault
+    
+    Usage:
+        def test_vault_ui(authenticated_vault_page):
+            # Page is already authenticated and on Vault
+            authenticated_vault_page.goto(f"https://vault.{captain_domain}/ui/vault/secrets")
+            # ... perform test actions ...
+    """
+    from tests.helpers.browser import complete_github_oauth_flow
+    
+    vault_url = f"https://vault.{captain_domain}/ui/"
+    
+    # Navigate to Vault
+    page.goto(vault_url, wait_until="load", timeout=30000)
+    
+    # Handle GitHub OAuth if redirected
+    if "github.com" in page.url:
+        complete_github_oauth_flow(page, github_credentials)
+        page.wait_for_timeout(3000)
+    
+    # If on login page, click SSO button
+    if "/login" in page.url or "method=oidc" not in page.url:
+        try:
+            page.get_by_role("button", name="Sign in with OIDC Provider").click()
+            page.wait_for_timeout(5000)
+            
+            if "github.com" in page.url:
+                complete_github_oauth_flow(page, github_credentials)
+                page.wait_for_timeout(3000)
+        except Exception:
+            # Button might not be present if already authenticated
+            pass
+    
+    # Navigate to Vault one final time to ensure we're there
+    page.goto(vault_url, wait_until="load", timeout=30000)
+    page.wait_for_timeout(3000)
+    
+    yield page
 
 
 def pytest_addoption(parser):

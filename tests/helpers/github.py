@@ -111,32 +111,47 @@ def delete_repo_if_exists(org, repo_name: str, verbose: bool = True) -> bool:
         raise
 
 
-def delete_repos_by_topic(org, topic: str, verbose: bool = True) -> int:
+def delete_repos_by_topic(org, topic: str, verbose: bool = True, min_age_seconds: int = 120) -> int:
     """
     Delete all repositories in an organization that have a specific topic.
     
-    This is used for cleanup of automated test repositories.
+    This is used for cleanup of automated test repositories. Only deletes repositories
+    older than min_age_seconds to avoid race conditions with newly created test repos
+    whose topics haven't propagated to GitHub's search index yet.
     
     Args:
         org: GitHub Organization or User object
         topic: Topic to search for (e.g., 'createdby-automated-test-delete-me')
         verbose: Whether to log details
+        min_age_seconds: Minimum age in seconds before a repo can be deleted (default: 120)
         
     Returns:
         int: Number of repositories deleted
     """
+    import datetime
     deleted_count = 0
+    skipped_count = 0
     
     if verbose:
         logger.info(f"Searching for repositories with topic '{topic}'...")
     
     try:
         repos = org.get_repos()
+        current_time = datetime.datetime.now(datetime.timezone.utc)
         
         for repo in repos:
             if topic in repo.get_topics():
+                # Check repo age to avoid deleting newly created repos
+                repo_age = (current_time - repo.created_at).total_seconds()
+                
+                if repo_age < min_age_seconds:
+                    if verbose:
+                        logger.info(f"  Found test repo: {repo.name} - skipping (too new: {int(repo_age)}s old)")
+                    skipped_count += 1
+                    continue
+                
                 if verbose:
-                    logger.info(f"  Found test repo: {repo.name} - deleting...")
+                    logger.info(f"  Found test repo: {repo.name} - deleting (age: {int(repo_age)}s)...")
                 try:
                     repo.delete()
                     deleted_count += 1
@@ -147,7 +162,9 @@ def delete_repos_by_topic(org, topic: str, verbose: bool = True) -> int:
         if verbose:
             if deleted_count > 0:
                 logger.info(f"✓ Deleted {deleted_count} test repository/repositories")
-            else:
+            if skipped_count > 0:
+                logger.info(f"  (Skipped {skipped_count} repo(s) created within last {min_age_seconds}s)")
+            if deleted_count == 0 and skipped_count == 0:
                 logger.info(f"✓ No test repositories found with topic '{topic}'")
         
         return deleted_count
@@ -184,6 +201,13 @@ def set_repo_topics(repo, topics: list, verbose: bool = True):
     
     if verbose:
         logger.info(f"✓ Topics verified: {', '.join(actual_topics)}")
+    
+    # CRITICAL: Wait for GitHub's search index to update
+    # Without this delay, orphan cleanup from other tests may not find this repo's topics
+    # and could incorrectly skip deleting it, or conversely, delete it prematurely
+    if verbose:
+        logger.info("⏱️  Waiting 5s for GitHub topic search index to update...")
+    time.sleep(5)
 
 
 def create_branch(repo, branch_name: str, source_branch: str = "main", verbose: bool = True):
@@ -344,7 +368,7 @@ def merge_pull_request(pr, merge_method: str = "merge", commit_message: Optional
 
 def create_github_file(repo, file_path, content, commit_message, verbose=True, log_content=False):
     """
-    Create a file in a GitHub repository with logging.
+    Create a file in a GitHub repository with logging and retry logic for 404 errors.
     
     Args:
         repo: GitHub Repository object
@@ -356,6 +380,9 @@ def create_github_file(repo, file_path, content, commit_message, verbose=True, l
     
     Returns:
         GitHub ContentFile object
+        
+    Raises:
+        GithubException: If creation fails after retries
     """
     if verbose:
         logger.info(f"      File: {file_path}")
@@ -368,16 +395,32 @@ def create_github_file(repo, file_path, content, commit_message, verbose=True, l
                 logger.info(f"      {line}")
             logger.info("      " + "="*60)
     
-    result = repo.create_file(
-        path=file_path,
-        message=commit_message,
-        content=content
-    )
+    # Retry logic for 404 errors (GitHub propagation delays)
+    max_retries = 3
+    retry_delay = 2
     
-    if verbose:
-        logger.info(f"      ✓ Committed to repository")
-    
-    return result
+    for attempt in range(max_retries):
+        try:
+            result = repo.create_file(
+                path=file_path,
+                message=commit_message,
+                content=content
+            )
+            
+            if verbose:
+                logger.info(f"      ✓ Committed to repository")
+            
+            return result
+            
+        except GithubException as e:
+            if e.status == 404 and attempt < max_retries - 1:
+                if verbose:
+                    logger.info(f"      ⚠ Got 404, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
+                time.sleep(retry_delay)
+                continue
+            else:
+                # Re-raise if not a 404 or if we've exhausted retries
+                raise
 
 
 def delete_directory_contents(repo, path, verbose=True, max_retries=3):
@@ -544,6 +587,7 @@ def create_or_update_file(repo, file_path: str, content: str, commit_message: st
         
     Raises:
         RuntimeError: If file creation/update fails validation
+        GithubException: If GitHub API call fails
     """
     try:
         # Try to create the file first
@@ -557,10 +601,17 @@ def create_or_update_file(repo, file_path: str, content: str, commit_message: st
         )
         
         # Validate the result
-        if not result or 'commit' not in result:
-            raise RuntimeError(f"GitHub API returned invalid response for {file_path}")
+        if not result:
+            raise RuntimeError(f"GitHub API returned None for {file_path}")
+        if 'commit' not in result:
+            raise RuntimeError(f"GitHub API response missing 'commit' key for {file_path}: {result}")
+        if not hasattr(result['commit'], 'sha'):
+            raise RuntimeError(f"GitHub API commit object missing 'sha' attribute for {file_path}")
         
         commit_sha = result['commit'].sha
+        if not commit_sha:
+            raise RuntimeError(f"GitHub API returned empty SHA for {file_path}")
+        
         if verbose:
             logger.info(f"✓ File created: {file_path}")
             logger.info(f"  Commit SHA: {commit_sha[:8]}")
@@ -574,28 +625,40 @@ def create_or_update_file(repo, file_path: str, content: str, commit_message: st
             if verbose:
                 logger.info(f"File exists, updating: {file_path}")
             
-            # Get the current file to get its SHA
-            existing_file = repo.get_contents(file_path)
-            
-            result = repo.update_file(
-                path=file_path,
-                message=commit_message,
-                content=content,
-                sha=existing_file.sha
-            )
-            
-            # Validate the result
-            if not result or 'commit' not in result:
-                raise RuntimeError(f"GitHub API returned invalid response for {file_path}")
-            
-            commit_sha = result['commit'].sha
-            if verbose:
-                logger.info(f"✓ File updated: {file_path}")
-                logger.info(f"  Commit SHA: {commit_sha[:8]}")
-                logger.info(f"  URL: {repo.html_url}/blob/{repo.default_branch}/{file_path}")
-            
-            return result
+            try:
+                # Get the current file to get its SHA
+                existing_file = repo.get_contents(file_path)
+                
+                result = repo.update_file(
+                    path=file_path,
+                    message=commit_message,
+                    content=content,
+                    sha=existing_file.sha
+                )
+                
+                # Validate the result
+                if not result:
+                    raise RuntimeError(f"GitHub API returned None for {file_path}")
+                if 'commit' not in result:
+                    raise RuntimeError(f"GitHub API response missing 'commit' key for {file_path}: {result}")
+                if not hasattr(result['commit'], 'sha'):
+                    raise RuntimeError(f"GitHub API commit object missing 'sha' attribute for {file_path}")
+                
+                commit_sha = result['commit'].sha
+                if not commit_sha:
+                    raise RuntimeError(f"GitHub API returned empty SHA for {file_path}")
+                
+                if verbose:
+                    logger.info(f"✓ File updated: {file_path}")
+                    logger.info(f"  Commit SHA: {commit_sha[:8]}")
+                    logger.info(f"  URL: {repo.html_url}/blob/{repo.default_branch}/{file_path}")
+                
+                return result
+            except GithubException as update_error:
+                logger.error(f"Failed to update {file_path}: {update_error}")
+                raise RuntimeError(f"Failed to update {file_path} after detecting it exists: {update_error}")
         else:
+            logger.error(f"GitHub API error creating {file_path}: Status={e.status}, Data={e.data}")
             raise
 
 

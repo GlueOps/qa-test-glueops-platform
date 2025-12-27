@@ -1,0 +1,30 @@
+#https://github.com/luszczynski/quarkus-debug?tab=readme-ov-file
+image:
+  registry: dockerhub.repo.gpkg.io
+  repository: mendhak/http-https-echo
+  tag: 37@sha256:f55000d9196bd3c853d384af7315f509d21ffb85de315c26e9874033b9f83e15
+  port: 8080
+service:
+  enabled: true
+deployment:
+  replicas: 1
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+ingress:
+  enabled: true
+  ingressClassName: public
+  entries:
+    - name: public
+      hosts:
+        - hostname: {hostname}
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  tls:
+    - secretName: {app_name}
+      hosts:
+        - {hostname}
+podDisruptionBudget:
+  enabled: false
