@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 @pytest.mark.authenticated
 @pytest.mark.ui
-def test_vault_login_via_github(page, github_credentials, captain_domain, screenshots):
+def test_login_to_vault(page, github_credentials, captain_domain, screenshots):
     """
     Test Vault login via GitHub OAuth flow.
     

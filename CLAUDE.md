@@ -49,9 +49,10 @@ qa-test-glueops-platform/
 │       ├── CLAUDE.md            # Detailed UI testing guide
 │       ├── conftest.py          # UI test fixtures (github_credentials, captain_domain)
 │       ├── helpers.py           # Browser connection, OAuth flow, screenshots
-│       ├── test_argocd_login_example.py   # ArgoCD applications page test
-│       ├── test_grafana_login_example.py  # Grafana dashboard test
-│       └── test_vault_login_example.py    # Vault secrets page test
+│       ├── test_oauth_redirect_to_github.py  # OAuth redirect tests (parameterized)
+│       ├── test_login_to_argocd.py           # ArgoCD applications page test
+│       ├── test_login_to_grafana.py          # Grafana dashboard test
+│       └── test_login_to_vault.py            # Vault secrets page test
 ├── lib/                          # Shared utilities
 │   ├── k8s_helpers.py           # Kubernetes helper functions
 │   └── port_forward.py          # Generic kubectl port-forward wrapper
@@ -136,9 +137,10 @@ def test_something(core_v1, platform_namespaces):
   - Creates test secrets (validates Vault access)
   - Extracts root token from terraform state
 - **UI Tests** (`tests/ui/`): Browser automation with Playwright
-  - ArgoCD login and applications page (`test_argocd_login_example.py`)
-  - Grafana login and dashboards (`test_grafana_login_example.py`)
-  - Vault login and secrets page (`test_vault_login_example.py`)
+  - ArgoCD login and applications page (`test_login_to_argocd.py`)
+  - Grafana login and dashboards (`test_login_to_grafana.py`)
+  - Vault login and secrets page (`test_login_to_vault.py`)
+  - OAuth redirect validation (`test_oauth_redirect_to_github.py` - parameterized)
   - **See [tests/ui/CLAUDE.md](tests/ui/CLAUDE.md) for detailed UI testing guide**
   - Ingress OAuth2 redirect (validates OAuth2 annotations and HTTP redirects)
   - Alertmanager firing alerts (whitelists: Watchdog)

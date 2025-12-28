@@ -9,17 +9,17 @@ log = logging.getLogger(__name__)
 @pytest.mark.authenticated
 @pytest.mark.slow
 @pytest.mark.ui
-def test_cluster_info_links(page, github_credentials, captain_domain, screenshots):
+def test_cluster_info_links(authenticated_cluster_info_page, captain_domain, screenshots):
     """
-    Test cluster-info page login and verify all HTTPS links are accessible.
+    Test that all HTTPS links on cluster-info page are accessible.
+    
+    Uses authenticated_cluster_info_page fixture which handles the OAuth flow.
     
     Steps:
-    1. Navigate to cluster-info page (will redirect to GitHub OAuth)
-    2. Complete GitHub OAuth flow
-    3. Navigate back to cluster-info page
-    4. Find all HTTPS links on the page
-    5. Click each link, wait 5 seconds, take screenshot
-    6. Return to cluster-info and continue with next link
+    1. Get authenticated page (already logged in via fixture)
+    2. Find all HTTPS links on the page
+    3. Visit each link, wait 5 seconds, take screenshot
+    4. Return to cluster-info and continue with next link
     
     Required environment variables:
     - GITHUB_USERNAME: GitHub username/email
@@ -34,29 +34,11 @@ def test_cluster_info_links(page, github_credentials, captain_domain, screenshot
         export CAPTAIN_DOMAIN="nonprod.foobar.onglueops.rocks"
         pytest tests/ui/test_cluster_info_links.py::test_cluster_info_links -v -s
     """
-    # Build cluster-info URL using captain_domain
+    # Use the authenticated page from fixture
+    page = authenticated_cluster_info_page
     cluster_info_url = f"https://cluster-info.{captain_domain}/"
     
-    # Navigate directly to cluster-info page - will redirect to GitHub OAuth
-    log.info(f"Navigating to cluster-info page: {cluster_info_url}")
-    page.goto(cluster_info_url, wait_until="load", timeout=30000)
-    log.info(f"After navigation, current URL: {page.url}")
-    
-    # Handle GitHub OAuth if redirected
-    if "github.com" in page.url:
-        log.info("Redirected to GitHub - completing OAuth...")
-        from tests.helpers.browser import complete_github_oauth_flow
-        complete_github_oauth_flow(page, github_credentials)
-        log.info(f"After OAuth, current URL: {page.url}")
-        page.wait_for_timeout(3000)
-    
-    # Navigate to cluster-info page one final time to ensure we're there
-    log.info(f"Final navigation to cluster-info page: {cluster_info_url}")
-    page.goto(cluster_info_url, wait_until="load", timeout=30000)
-    log.info(f"Final URL: {page.url}")
-    
-    # Wait for page to load
-    page.wait_for_timeout(5000)
+    log.info(f"Using authenticated cluster-info page: {page.url}")
     
     # Verify we're on the cluster-info page
     if "cluster-info" not in page.url:

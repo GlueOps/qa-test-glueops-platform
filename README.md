@@ -219,9 +219,10 @@ pytest --fixtures                     # Available fixtures
 
 ### UI Tests (`tests/ui/`)
 
-- [test_argocd_login_example.py](tests/ui/test_argocd_login_example.py) - ArgoCD login via GitHub SSO
-- [test_grafana_login_example.py](tests/ui/test_grafana_login_example.py) - Grafana login via GitHub SSO
-- [test_vault_login_example.py](tests/ui/test_vault_login_example.py) - Vault login via GitHub SSO
+- [test_login_to_argocd.py](tests/ui/test_login_to_argocd.py) - ArgoCD login via GitHub SSO
+- [test_login_to_grafana.py](tests/ui/test_login_to_grafana.py) - Grafana login via GitHub SSO
+- [test_login_to_vault.py](tests/ui/test_login_to_vault.py) - Vault login via GitHub SSO
+- [test_oauth_redirect_to_github.py](tests/ui/test_oauth_redirect_to_github.py) - OAuth redirect validation (parameterized)
 
 **Requirements for UI tests:**
 - Chrome browser running with remote debugging: `google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug`

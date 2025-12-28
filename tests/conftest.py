@@ -1254,6 +1254,48 @@ def authenticated_vault_page(page, github_credentials, captain_domain):
     yield page
 
 
+@pytest.fixture
+def authenticated_cluster_info_page(page, github_credentials, captain_domain):
+    """
+    Browser page authenticated to cluster-info via GitHub OAuth.
+    
+    Handles the complete OAuth flow including:
+    - Navigating to cluster-info
+    - Detecting and completing GitHub OAuth login
+    - Managing redirects
+    
+    Args:
+        page: Playwright page fixture (injected automatically)
+        github_credentials: GitHub credentials fixture (injected automatically)
+        captain_domain: Captain domain fixture (injected automatically)
+    
+    Returns:
+        Page: Playwright page object authenticated to cluster-info
+    
+    Usage:
+        def test_cluster_info(authenticated_cluster_info_page):
+            # Page is already authenticated and on cluster-info
+            # ... perform test actions ...
+    """
+    from tests.helpers.browser import complete_github_oauth_flow
+    
+    cluster_info_url = f"https://cluster-info.{captain_domain}/"
+    
+    # Navigate to cluster-info
+    page.goto(cluster_info_url, wait_until="load", timeout=30000)
+    
+    # Handle GitHub OAuth if redirected
+    if "github.com" in page.url:
+        complete_github_oauth_flow(page, github_credentials)
+        page.wait_for_timeout(3000)
+    
+    # Navigate to cluster-info one final time to ensure we're there
+    page.goto(cluster_info_url, wait_until="load", timeout=30000)
+    page.wait_for_timeout(3000)
+    
+    yield page
+
+
 def pytest_addoption(parser):
     """Add custom command-line options"""
     parser.addoption(

@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 @pytest.mark.authenticated
 @pytest.mark.ui
-def test_argocd_login_via_github(authenticated_argocd_page, captain_domain, screenshots):
+def test_login_to_argocd(authenticated_argocd_page, captain_domain, screenshots):
     """Test ArgoCD login via GitHub OAuth flow.
     
     Uses authenticated_argocd_page fixture which handles the complete OAuth flow.

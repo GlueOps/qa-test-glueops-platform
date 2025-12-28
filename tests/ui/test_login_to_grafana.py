@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 @pytest.mark.authenticated
 @pytest.mark.ui
-def test_grafana_login_via_github(page, github_credentials, captain_domain, screenshots):
+def test_login_to_grafana(page, github_credentials, captain_domain, screenshots):
     """
     Test Grafana login via GitHub OAuth flow.
     

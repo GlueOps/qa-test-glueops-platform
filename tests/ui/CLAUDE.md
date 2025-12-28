@@ -26,9 +26,10 @@ UI tests validate web-based authentication and user interface functionality for 
 tests/ui/
 ├── helpers.py                        # Shared UI test utilities
 ├── conftest.py                       # Pytest fixtures (github_credentials, captain_domain)
-├── test_argocd_login_example.py      # ArgoCD applications page test
-├── test_grafana_login_example.py     # Grafana dashboard test
-└── test_vault_login_example.py       # Vault secrets page test
+├── test_oauth_redirect_to_github.py  # OAuth redirect tests (parameterized)
+├── test_login_to_argocd.py           # ArgoCD applications page test
+├── test_login_to_grafana.py          # Grafana dashboard test
+└── test_login_to_vault.py            # Vault secrets page test
 ```
 
 ### Core Components
