@@ -17,4 +17,5 @@ test-results/
 reports-*
 plus_metadata.json
 allure-results/*
+allure-single-file/*
 screenshots/*

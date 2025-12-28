@@ -1,4 +1,4 @@
-.PHONY: help test build clean clean-reports clean-baselines allure-report allure-serve discover markers fixtures \
+.PHONY: help test build clean clean-reports clean-baselines allure-report allure-single-file allure-serve upload-results discover markers fixtures \
         check-env setup-kubeconfig setup-allure lint typecheck ci \
         quick api ui gitops gitops-deployment letsencrypt preview-environments full
 
@@ -55,8 +55,10 @@ help:
 	@echo ""
 	@echo ""
 	@echo "Allure Reports:"
-	@echo "  make allure-report     - Generate Allure HTML report from results"
-	@echo "  make allure-serve      - Serve Allure report on http://localhost:5050"
+	@echo "  make allure-report      - Generate Allure HTML report from results"
+	@echo "  make allure-single-file - Generate single-file HTML report (portable)"
+	@echo "  make allure-serve       - Serve Allure report on http://localhost:5050"
+	@echo "  make upload-results     - Upload results to Allure TestOps cloud"
 	@echo "  Note: Tests generate allure-results/ data automatically"
 	@echo ""
 	@echo "Utilities:"
@@ -172,6 +174,19 @@ allure-report: setup-allure
 	@echo "✅ Report generated at: allure-report/index.html"
 	@echo "   Open with: open allure-report/index.html (macOS) or xdg-open allure-report/index.html (Linux)"
 
+# Generate portable single-file HTML report
+allure-single-file: setup-allure
+	@echo "Generating single-file Allure report..."
+	@mkdir -p allure-single-file
+	@sudo chmod -R 777 allure-single-file
+	@docker run --rm \
+		-v "$$(pwd)/allure-results:/allure-results:ro" \
+		-v "$$(pwd)/allure-single-file:/allure-single-file" \
+		frankescobar/allure-docker-service \
+		allure generate /allure-results -o /allure-single-file --single-file --clean
+	@echo "✅ Single-file report generated at: allure-single-file/index.html"
+	@echo "   This file can be shared and opened directly in any browser"
+
 # Generate and serve Allure report on http://localhost:5050
 allure-serve: setup-allure
 	@echo "Generating and serving Allure report..."
@@ -187,6 +202,25 @@ allure-serve: setup-allure
 		-e KEEP_HISTORY=1 \
 		-v "$$(pwd)/allure-results:/app/allure-results" \
 		frankescobar/allure-docker-service || docker rm -f allure-server 2>/dev/null
+
+# Upload results to Allure TestOps cloud
+upload-results:
+	@set -a && [ -f .env ] && . ./.env; set +a; \
+	if [ -z "$$ALLURE_ENDPOINT" ] || [ -z "$$ALLURE_TOKEN" ] || [ -z "$$ALLURE_PROJECT_ID" ]; then \
+		echo "❌ Error: Allure TestOps credentials not configured"; \
+		echo "   Set ALLURE_ENDPOINT, ALLURE_TOKEN, and ALLURE_PROJECT_ID in .env"; \
+		exit 1; \
+	fi; \
+	echo "📤 Uploading results to Allure TestOps..."; \
+	LAUNCH_NAME="$${ALLURE_LAUNCH_NAME:-Test Run - $$(date +%Y-%m-%d)}"; \
+	docker run --rm \
+		-v "$$(pwd)/allure-results:/allure-results:ro" \
+		-e ALLURE_ENDPOINT="$$ALLURE_ENDPOINT" \
+		-e ALLURE_TOKEN="$$ALLURE_TOKEN" \
+		-e ALLURE_PROJECT_ID="$$ALLURE_PROJECT_ID" \
+		allure/allurectl:latest \
+		upload /allure-results --launch-name "$$LAUNCH_NAME"; \
+	echo "✅ Results uploaded to Allure TestOps!"
 
 # Discovery targets
 discover: build
