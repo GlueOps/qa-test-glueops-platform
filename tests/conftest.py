@@ -499,9 +499,10 @@ def captain_manifests(
     # Define fixture applications (easy to add more)
     # These are shared test utilities automatically deployed before tests run
     fixture_app_configs = [
-        {'name': 'fixture-http-debug-1', 'replicas': 2},
-        {'name': 'fixture-http-debug-2', 'replicas': 2},
-        {'name': 'fixture-http-debug-3', 'replicas': 2},
+        {'name': 'fixture-http-debug-1', 'replicas': 2, 'type': 'http-debug'},
+        {'name': 'fixture-http-debug-2', 'replicas': 2, 'type': 'http-debug'},
+        {'name': 'fixture-http-debug-3', 'replicas': 2, 'type': 'http-debug'},
+        {'name': 'container-registry', 'replicas': 1, 'type': 'registry'},
     ]
     
     fixture_apps_metadata = []
@@ -509,23 +510,53 @@ def captain_manifests(
     
     from tests.templates import load_template
     
-    def create_fixture_values_yaml(app_name, hostname, replicas):
-        """Generate values.yaml for fixture http-debug application.
+    def create_fixture_values_yaml(app_name, hostname, replicas, app_type='http-debug'):
+        """Generate values.yaml for fixture application.
         
         Args:
             app_name: Application name for deployment
             hostname: Full hostname for ingress (e.g., app.apps.example.com)
             replicas: Number of pod replicas to deploy
+            app_type: Type of app ('http-debug' or 'registry')
             
         Returns:
             str: YAML content for values.yaml file
         """
-        return load_template('http-debug-app-values.yaml',
-                           hostname=hostname,
-                           replicas=replicas,
-                           cpu='100m',
-                           memory='128Mi',
-                           pdb_enabled='true')
+        if app_type == 'registry':
+            # Inline YAML for container registry
+            return f"""#https://hub.docker.com/_/registry
+image:
+  registry: dockerhub.repo.gpkg.io
+  repository: registry
+  tag: 3.0.0
+  port: 5000
+service:
+  enabled: true
+deployment:
+  replicas: {replicas}
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+ingress:
+  enabled: true
+  ingressClassName: public
+  entries:
+    - name: public
+      hosts:
+        - hostname: {hostname}
+podDisruptionBudget:
+  enabled: true
+"""
+        else:
+            # Use existing http-debug template
+            return load_template('http-debug-app-values.yaml',
+                               hostname=hostname,
+                               replicas=replicas,
+                               cpu='100m',
+                               memory='128Mi',
+                               pdb_enabled='true')
     
     # Load env-values template
     env_values_yaml = load_template('env-values.yaml')
@@ -534,6 +565,7 @@ def captain_manifests(
     for config in fixture_app_configs:
         app_name_base = config['name']
         replicas = config['replicas']
+        app_type = config.get('type', 'http-debug')
         guid = str(uuid.uuid4())[:8]
         app_name = f"{app_name_base}-{guid}"
         hostname = f"{app_name}.apps.{captain_domain}"
@@ -544,7 +576,7 @@ def captain_manifests(
         logger.info(f"   Hostname: {hostname}")
         
         # Create directory structure
-        values_yaml = create_fixture_values_yaml(app_name, hostname, replicas)
+        values_yaml = create_fixture_values_yaml(app_name, hostname, replicas, app_type)
         
         create_github_file(
             ephemeral_github_repo,
@@ -1181,9 +1213,9 @@ def authenticated_grafana_page(page, github_credentials, captain_domain):
         complete_github_oauth_flow(page, github_credentials)
         page.wait_for_timeout(3000)
     
-    # If on login page, click SSO button
+    # If on login page, click SSO link
     if "/login" in page.url:
-        page.get_by_role("button", name="Log in via GitHub SSO").click()
+        page.get_by_role("link", name="Sign in with GitHub SSO").click()
         page.wait_for_timeout(5000)
         
         if "github.com" in page.url:
