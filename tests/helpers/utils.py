@@ -11,7 +11,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
-def display_progress_bar(wait_time, interval=15, description="Waiting", verbose=True):
+def display_progress_bar(wait_time, interval=15, description="Waiting"):
     """
     Display a progress bar with time tracking.
     
@@ -19,15 +19,10 @@ def display_progress_bar(wait_time, interval=15, description="Waiting", verbose=
         wait_time: Total time to wait in seconds
         interval: Update interval in seconds (default: 15)
         description: Description of what we're waiting for (default: "Waiting")
-        verbose: Whether to display progress (default: True)
     
     Returns:
         float: Actual elapsed time in seconds
     """
-    if not verbose:
-        time.sleep(wait_time)
-        return wait_time
-    
     logger.info(f"\n⏳ {description}...")
     logger.info(f"\n   Progress:")
     
@@ -58,32 +53,26 @@ def display_progress_bar(wait_time, interval=15, description="Waiting", verbose=
     return actual_elapsed
 
 
-def print_section_header(title, verbose=True):
+def print_section_header(title):
     """
     Print a formatted section header.
     
     Args:
         title: Section title
-        verbose: Whether to print (default: True)
     """
-    if verbose:
-        logger.info("\n" + "="*70)
-        logger.info(title)
-        logger.info("="*70)
+    logger.info("\n" + "="*70)
+    logger.info(title)
+    logger.info("="*70)
 
 
-def print_summary_list(items, title="Items", verbose=True):
+def print_summary_list(items, title="Items"):
     """
     Print a formatted list of items.
     
     Args:
         items: List of items to print
         title: Title for the list (default: "Items")
-        verbose: Whether to print (default: True)
     """
-    if not verbose:
-        return
-    
     logger.info(f"\n{title}:")
     for idx, item in enumerate(items, 1):
         if isinstance(item, dict):

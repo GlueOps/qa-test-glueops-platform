@@ -18,7 +18,6 @@ import ssl
 import socket
 import requests
 import dns.resolver
-from kubernetes import client
 from kubernetes.client.rest import ApiException
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
@@ -122,20 +121,18 @@ def validate_pod_execution(core_v1, job_name, namespace):
 # ARGOCD VALIDATION
 # =============================================================================
 
-def validate_all_argocd_apps(custom_api, namespace_filter=None, verbose=True):
+def validate_all_argocd_apps(custom_api, namespace_filter=None):
     """
     Check all ArgoCD applications for health and sync status.
     
     Args:
         custom_api: Kubernetes CustomObjectsApi client
         namespace_filter: Optional namespace filter for ArgoCD apps
-        verbose: Print detailed status for each app (default: True)
     
     Returns:
         list: List of problem descriptions (empty if all healthy)
     """
-    if verbose:
-        logger.info("Checking ArgoCD applications...")
+    logger.info("Checking ArgoCD applications...")
     
     problems = []
     
@@ -158,8 +155,7 @@ def validate_all_argocd_apps(custom_api, namespace_filter=None, verbose=True):
         return problems
     
     if not apps.get('items'):
-        if verbose:
-            logger.info("  No ArgoCD applications found")
+        logger.info("  No ArgoCD applications found")
         return problems
     
     total_apps = len(apps['items'])
@@ -181,17 +177,16 @@ def validate_all_argocd_apps(custom_api, namespace_filter=None, verbose=True):
         if health == 'Healthy' and sync == 'Synced':
             healthy_count += 1
         
-        if verbose:
-            status_icon = "✓" if (health == 'Healthy' and sync == 'Synced') else "✗"
-            logger.info(f"  {status_icon} {namespace}/{name}: Health={health}, Sync={sync}")
+        status_icon = "✓" if (health == 'Healthy' and sync == 'Synced') else "✗"
+        logger.info(f"  {status_icon} {namespace}/{name}: Health={health}, Sync={sync}")
     
-    if verbose and not problems:
+    if not problems:
         logger.info(f"  All {total_apps} applications healthy and synced")
     
     return problems
 
 
-def wait_for_argocd_apps_deleted(custom_api, namespace: str, verbose: bool = True) -> bool:
+def wait_for_argocd_apps_deleted(custom_api, namespace: str) -> bool:
     """
     Wait for all ArgoCD applications in a namespace to be deleted.
     
@@ -201,17 +196,13 @@ def wait_for_argocd_apps_deleted(custom_api, namespace: str, verbose: bool = Tru
     Args:
         custom_api: Kubernetes CustomObjectsApi client
         namespace: Namespace to check for ArgoCD applications
-        verbose: Print status updates (default: True)
         
     Returns:
         bool: True if all apps deleted within timeout, False otherwise
     """
-    from kubernetes.client.rest import ApiException
-    
     start_time = time.time()
     
-    if verbose:
-        logger.info(f"Waiting for ArgoCD applications in namespace '{namespace}' to be deleted...")
+    logger.info(f"Waiting for ArgoCD applications in namespace '{namespace}' to be deleted...")
     
     while time.time() - start_time < DEFAULT_TIMEOUT:
         try:
@@ -225,33 +216,29 @@ def wait_for_argocd_apps_deleted(custom_api, namespace: str, verbose: bool = Tru
             app_count = len(apps.get('items', []))
             
             if app_count == 0:
-                if verbose:
-                    logger.info(f"✓ All ArgoCD applications in '{namespace}' have been deleted")
+                logger.info(f"✓ All ArgoCD applications in '{namespace}' have been deleted")
                 return True
             
-            if verbose:
-                elapsed = int(time.time() - start_time)
-                logger.info(f"  {app_count} application(s) remaining in '{namespace}' ({elapsed}s elapsed)")
+            elapsed = int(time.time() - start_time)
+            logger.info(f"  {app_count} application(s) remaining in '{namespace}' ({elapsed}s elapsed)")
             
             time.sleep(DEFAULT_POLL_INTERVAL)
             
         except ApiException as e:
             if e.status == 404:
                 # Namespace or CRD not found - consider this as "deleted"
-                if verbose:
-                    logger.info(f"✓ Namespace '{namespace}' not found (already deleted)")
+                logger.info(f"✓ Namespace '{namespace}' not found (already deleted)")
                 return True
             else:
                 raise
     
     # Timeout reached
-    if verbose:
-        logger.warning(f"⚠ Timeout waiting for ArgoCD apps in '{namespace}' to be deleted after {DEFAULT_TIMEOUT}s")
+    logger.warning(f"⚠ Timeout waiting for ArgoCD apps in '{namespace}' to be deleted after {DEFAULT_TIMEOUT}s")
     
     return False
 
 
-def ensure_argocd_app_allows_empty(custom_api, app_name, namespace="glueops-core", verbose=False):
+def ensure_argocd_app_allows_empty(custom_api, app_name, namespace="glueops-core"):
     """
     Patch ArgoCD application to allow empty sync (no resources).
     This prevents the "auto-sync will wipe out all resources" error.
@@ -260,14 +247,12 @@ def ensure_argocd_app_allows_empty(custom_api, app_name, namespace="glueops-core
         custom_api: Kubernetes CustomObjectsApi client
         app_name: Name of the ArgoCD Application to patch
         namespace: Namespace where the Application resource exists (default: glueops-core)
-        verbose: Enable verbose logging
     
     Returns:
         bool: True if patch successful, False otherwise
     """
     try:
-        if verbose:
-            logger.info(f"Ensuring '{app_name}' allows empty sync...")
+        logger.info(f"Ensuring '{app_name}' allows empty sync...")
         
         # Patch to add allowEmpty and enable auto-sync with prune
         # Comment added to indicate this was modified by test automation
@@ -292,22 +277,20 @@ def ensure_argocd_app_allows_empty(custom_api, app_name, namespace="glueops-core
             body=patch
         )
         
-        if verbose:
-            logger.info(f"  ✓ Patched '{app_name}' with allowEmpty=true")
+        logger.info(f"  ✓ Patched '{app_name}' with allowEmpty=true")
         
         return True
         
     except ApiException as e:
         if e.status == 404:
-            if verbose:
-                logger.warning(f"⚠ Application '{app_name}' not found")
+            logger.warning(f"⚠ Application '{app_name}' not found")
             return False
         else:
             logger.error(f"Failed to patch '{app_name}': {e}")
             raise
 
 
-def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core", verbose=False):
+def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core"):
     """
     Force sync an ArgoCD application if not already syncing.
     
@@ -318,21 +301,18 @@ def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core", verbos
         custom_api: Kubernetes CustomObjectsApi client
         app_name: Name of the ArgoCD Application to sync
         namespace: Namespace where the Application resource exists (default: glueops-core)
-        verbose: Enable verbose logging
     
     Returns:
         bool: True if sync triggered or already running, False otherwise
     """
     try:
-        if verbose:
-            logger.info(f"Force syncing ArgoCD application '{app_name}' in namespace '{namespace}'...")
+        logger.info(f"Force syncing ArgoCD application '{app_name}' in namespace '{namespace}'...")
         
         # Step 1: Ensure app allows empty sync (prevents "wipe out all resources" error)
-        ensure_argocd_app_allows_empty(custom_api, app_name, namespace, verbose)
+        ensure_argocd_app_allows_empty(custom_api, app_name, namespace)
         
         # Step 2: Wait for the patch to take effect and ArgoCD to react
-        if verbose:
-            logger.info(f"  Waiting 30s for sync policy changes to take effect...")
+        logger.info(f"  Waiting 30s for sync policy changes to take effect...")
         time.sleep(30)
         
         # Step 3: Check if an operation is already running
@@ -348,8 +328,7 @@ def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core", verbos
         phase = operation_state.get('phase', '')
         
         if phase in ['Running', 'Terminating']:
-            if verbose:
-                logger.info(f"  ⚙️  Operation already {phase.lower()}, not triggering new sync")
+            logger.info(f"  ⚙️  Operation already {phase.lower()}, not triggering new sync")
             return True
         
         # Step 4: Trigger a refresh to ensure ArgoCD has latest repo state
@@ -370,8 +349,7 @@ def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core", verbos
             body=refresh_patch
         )
         
-        if verbose:
-            logger.info(f"  Triggered refresh for '{app_name}'")
+        logger.info(f"  Triggered refresh for '{app_name}'")
         
         time.sleep(5)
         
@@ -398,22 +376,20 @@ def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core", verbos
             body=sync_patch
         )
         
-        if verbose:
-            logger.info(f"✓ Force sync triggered for '{app_name}'")
+        logger.info(f"✓ Force sync triggered for '{app_name}'")
         
         return True
         
     except ApiException as e:
         if e.status == 404:
-            if verbose:
-                logger.warning(f"⚠ Application '{app_name}' not found in namespace '{namespace}'")
+            logger.warning(f"⚠ Application '{app_name}' not found in namespace '{namespace}'")
             return False
         else:
             logger.error(f"Failed to force sync '{app_name}': {e}")
             raise
 
 
-def wait_for_argocd_app_healthy(custom_api, app_name, namespace="glueops-core", allow_missing=False, verbose=False, timeout=DEFAULT_TIMEOUT):
+def wait_for_argocd_app_healthy(custom_api, app_name, namespace="glueops-core", allow_missing=False, timeout=DEFAULT_TIMEOUT):
     """
     Wait for an ArgoCD application to become Healthy and Synced.
     More lenient - considers app healthy if it has no resources to manage.
@@ -423,7 +399,6 @@ def wait_for_argocd_app_healthy(custom_api, app_name, namespace="glueops-core", 
         app_name: Name of the ArgoCD Application to check
         namespace: Namespace where the Application resource exists (default: glueops-core)
         allow_missing: If True, treat missing app as success (default: False)
-        verbose: Enable verbose logging
         timeout: Timeout in seconds (default: DEFAULT_TIMEOUT)
     
     Returns:
@@ -431,8 +406,7 @@ def wait_for_argocd_app_healthy(custom_api, app_name, namespace="glueops-core", 
     """
     start_time = time.time()
     
-    if verbose:
-        logger.info(f"Waiting for ArgoCD application '{app_name}' to stabilize...")
+    logger.info(f"Waiting for ArgoCD application '{app_name}' to stabilize...")
     
     last_error_type = None
     consecutive_good_checks = 0
@@ -472,22 +446,21 @@ def wait_for_argocd_app_healthy(custom_api, app_name, namespace="glueops-core", 
             if is_healthy:
                 consecutive_good_checks += 1
                 if consecutive_good_checks >= required_consecutive_checks:
-                    if verbose:
-                        state_desc = "Healthy/Synced" if health_status == 'Healthy' else "Synced (no resources)"
-                        logger.info(f"✓ Application '{app_name}' is {state_desc}")
+                    state_desc = "Healthy/Synced" if health_status == 'Healthy' else "Synced (no resources)"
+                    logger.info(f"✓ Application '{app_name}' is {state_desc}")
                     return True
-                elif verbose:
+                else:
                     logger.info(f"  {app_name}: {health_status}/{sync_status} (confirming... {consecutive_good_checks}/{required_consecutive_checks})")
             else:
                 consecutive_good_checks = 0
                 
                 # Log sync errors if present
-                if sync_errors and verbose:
+                if sync_errors:
                     error_msg = sync_errors[0].get('message', 'Unknown error')
                     if error_msg != last_error_type:
                         logger.info(f"  {app_name}: {health_status}/{sync_status} - {error_msg}")
                         last_error_type = error_msg
-                elif verbose:
+                else:
                     elapsed = int(time.time() - start_time)
                     logger.info(f"  {app_name}: {health_status}/{sync_status} (resources: {len(resources)}, {elapsed}s elapsed)")
             
@@ -496,19 +469,16 @@ def wait_for_argocd_app_healthy(custom_api, app_name, namespace="glueops-core", 
         except ApiException as e:
             if e.status == 404:
                 if allow_missing:
-                    if verbose:
-                        logger.info(f"✓ Application '{app_name}' not found (treated as success)")
+                    logger.info(f"✓ Application '{app_name}' not found (treated as success)")
                     return True
                 else:
-                    if verbose:
-                        logger.warning(f"⚠ Application '{app_name}' not found")
+                    logger.warning(f"⚠ Application '{app_name}' not found")
                     return False
             else:
                 raise
     
     # Timeout reached
-    if verbose:
-        logger.warning(f"⚠ Timeout waiting for '{app_name}' to stabilize after {timeout}s")
+    logger.warning(f"⚠ Timeout waiting for '{app_name}' to stabilize after {timeout}s")
     
     return False
 
@@ -517,7 +487,7 @@ def wait_for_argocd_app_healthy(custom_api, app_name, namespace="glueops-core", 
 # POD HEALTH VALIDATION
 # =============================================================================
 
-def validate_pod_health(core_v1, platform_namespaces, verbose=True):
+def validate_pod_health(core_v1, platform_namespaces):
     """
     Check pod health across platform namespaces.
     
@@ -531,13 +501,11 @@ def validate_pod_health(core_v1, platform_namespaces, verbose=True):
     Args:
         core_v1: Kubernetes CoreV1Api client
         platform_namespaces: List of namespaces to check
-        verbose: Print detailed status (default: True)
     
     Returns:
         list: List of problem descriptions (empty if all healthy)
     """
-    if verbose:
-        logger.info("Checking pod health across platform namespaces...")
+    logger.info("Checking pod health across platform namespaces...")
     
     problems = []
     total_pods = 0
@@ -557,8 +525,7 @@ def validate_pod_health(core_v1, platform_namespaces, verbose=True):
             # Check for Failed/Unknown phase
             if pod_phase in ['Failed', 'Unknown']:
                 problems.append(f"{namespace}/{pod_name}: Phase={pod_phase}")
-                if verbose:
-                    logger.info(f"  ✗ {namespace}/{pod_name}: Phase={pod_phase}")
+                logger.info(f"  ✗ {namespace}/{pod_name}: Phase={pod_phase}")
                 continue
             
             # Check container statuses
@@ -593,16 +560,15 @@ def validate_pod_health(core_v1, platform_namespaces, verbose=True):
                         problems.append(f"{namespace}/{pod_name}/{container_name}: Currently OOMKilled")
                         pod_has_issues = True
             
-            if verbose and pod_has_issues:
+            if pod_has_issues:
                 logger.info(f"  ✗ {namespace}/{pod_name}: Issues found")
             elif not pod_has_issues:
                 healthy_pods += 1
     
-    if verbose:
-        if problems:
-            logger.info(f"  {healthy_pods}/{total_pods} pods healthy")
-        else:
-            logger.info(f"  All {total_pods} pods healthy")
+    if problems:
+        logger.info(f"  {healthy_pods}/{total_pods} pods healthy")
+    else:
+        logger.info(f"  All {total_pods} pods healthy")
     
     return problems
 
@@ -611,7 +577,7 @@ def validate_pod_health(core_v1, platform_namespaces, verbose=True):
 # JOB VALIDATION
 # =============================================================================
 
-def validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs=None, verbose=True):
+def validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs=None):
     """
     Check for failed Jobs across platform namespaces.
     
@@ -619,15 +585,13 @@ def validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs=None, verbo
         batch_v1: Kubernetes BatchV1Api client
         platform_namespaces: List of namespaces to check
         exclude_jobs: Optional list of job name patterns to exclude from errors
-        verbose: Print detailed status (default: True)
     
     Returns:
         tuple: (problems, warnings) where:
             - problems: list of non-excluded failed jobs
             - warnings: list of excluded failed jobs
     """
-    if verbose:
-        logger.info("Checking for failed jobs...")
+    logger.info("Checking for failed jobs...")
     
     exclude_jobs = exclude_jobs or []
     problems = []
@@ -663,15 +627,12 @@ def validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs=None, verbo
                 
                 if is_excluded:
                     warnings.append(f"{namespace}/{job_name}: Failed (attempts: {failed_count}) [EXCLUDED]")
-                    if verbose:
-                        logger.info(f"  ⚠ {namespace}/{job_name}: Failed (attempts: {failed_count}) [EXCLUDED]")
+                    logger.info(f"  ⚠ {namespace}/{job_name}: Failed (attempts: {failed_count}) [EXCLUDED]")
                 else:
                     problems.append(f"{namespace}/{job_name}: Failed (attempts: {failed_count})")
-                    if verbose:
-                        logger.info(f"  ✗ {namespace}/{job_name}: Failed (attempts: {failed_count})")
+                    logger.info(f"  ✗ {namespace}/{job_name}: Failed (attempts: {failed_count})")
     
-    if verbose:
-        logger.info(f"  Checked {total_jobs} jobs, {failed_jobs} with failures, {len(problems)} requiring attention")
+    logger.info(f"  Checked {total_jobs} jobs, {failed_jobs} with failures, {len(problems)} requiring attention")
     
     return problems, warnings
 
@@ -680,7 +641,7 @@ def validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs=None, verbo
 # INGRESS VALIDATION
 # =============================================================================
 
-def validate_ingress_configuration(networking_v1, platform_namespaces, verbose=True):
+def validate_ingress_configuration(networking_v1, platform_namespaces):
     """
     Validate Ingress resources have proper configuration.
     
@@ -692,13 +653,11 @@ def validate_ingress_configuration(networking_v1, platform_namespaces, verbose=T
     Args:
         networking_v1: Kubernetes NetworkingV1Api client
         platform_namespaces: List of namespaces to check
-        verbose: Print detailed status (default: True)
     
     Returns:
         tuple: (problems, total_ingresses)
     """
-    if verbose:
-        logger.info("Validating Ingress configuration...")
+    logger.info("Validating Ingress configuration...")
     
     problems = []
     total_ingresses = 0
@@ -713,54 +672,48 @@ def validate_ingress_configuration(networking_v1, platform_namespaces, verbose=T
             # Check if spec exists
             if not ingress.spec:
                 problems.append(f"{name}: Missing spec")
-                if verbose:
-                    logger.info(f"  ✗ {name}: Missing spec")
+                logger.info(f"  ✗ {name}: Missing spec")
                 continue
             
             # Check if rules exist
             if not ingress.spec.rules:
                 problems.append(f"{name}: No rules defined")
-                if verbose:
-                    logger.info(f"  ✗ {name}: No rules defined")
+                logger.info(f"  ✗ {name}: No rules defined")
                 continue
             
             # Check each rule for host
             for i, rule in enumerate(ingress.spec.rules):
                 if not rule.host or rule.host.strip() == "":
                     problems.append(f"{name}: Rule {i} has empty host")
-                    if verbose:
-                        logger.info(f"  ✗ {name}: Rule {i} has empty host")
+                    logger.info(f"  ✗ {name}: Rule {i} has empty host")
             
             # Check load balancer status
             if not ingress.status or not ingress.status.load_balancer:
                 problems.append(f"{name}: No load balancer status")
-                if verbose:
-                    logger.info(f"  ✗ {name}: No load balancer status")
+                logger.info(f"  ✗ {name}: No load balancer status")
                 continue
             
             lb_ingress = ingress.status.load_balancer.ingress
             if not lb_ingress:
                 problems.append(f"{name}: Load balancer has no ingress")
-                if verbose:
-                    logger.info(f"  ✗ {name}: Load balancer has no ingress")
+                logger.info(f"  ✗ {name}: Load balancer has no ingress")
                 continue
             
             # Check if at least one LB ingress has IP or hostname
             has_address = any(lb.ip or lb.hostname for lb in lb_ingress)
             if not has_address:
                 problems.append(f"{name}: Load balancer has no IP or hostname")
-                if verbose:
-                    logger.info(f"  ✗ {name}: Load balancer has no IP or hostname")
-            elif verbose:
+                logger.info(f"  ✗ {name}: Load balancer has no IP or hostname")
+            else:
                 logger.info(f"  ✓ {name}: Valid configuration")
     
-    if verbose and not problems:
+    if not problems:
         logger.info(f"  All {total_ingresses} ingresses properly configured")
     
     return problems, total_ingresses
 
 
-def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1', verbose=True):
+def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1'):
     """
     Validate DNS resolution for Ingress hosts.
     
@@ -772,13 +725,11 @@ def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1
         networking_v1: Kubernetes NetworkingV1Api client
         platform_namespaces: List of namespaces to check
         dns_server: DNS server to query (default: '1.1.1.1')
-        verbose: Print detailed status (default: True)
     
     Returns:
         tuple: (problems, checked_count)
     """
-    if verbose:
-        logger.info(f"Validating DNS resolution (using {dns_server})...")
+    logger.info(f"Validating DNS resolution (using {dns_server})...")
     
     problems = []
     checked_count = 0
@@ -821,31 +772,27 @@ def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1
                     # Check if any resolved IP matches expected
                     if not any(ip in expected_ips for ip in resolved_ips):
                         problems.append(f"{name} ({host}): Resolves to {resolved_ips}, expected {expected_ips}")
-                        if verbose:
-                            logger.info(f"  ✗ {host}: {resolved_ips} (expected {expected_ips})")
-                    elif verbose:
+                        logger.info(f"  ✗ {host}: {resolved_ips} (expected {expected_ips})")
+                    else:
                         logger.info(f"  ✓ {host}: {resolved_ips[0]}")
                         
                 except dns.resolver.NXDOMAIN:
                     problems.append(f"{name} ({host}): NXDOMAIN (does not exist)")
-                    if verbose:
-                        logger.info(f"  ✗ {host}: NXDOMAIN")
+                    logger.info(f"  ✗ {host}: NXDOMAIN")
                 except dns.resolver.NoAnswer:
                     problems.append(f"{name} ({host}): No A records")
-                    if verbose:
-                        logger.info(f"  ✗ {host}: No A records")
+                    logger.info(f"  ✗ {host}: No A records")
                 except Exception as e:
                     problems.append(f"{name} ({host}): DNS error - {e}")
-                    if verbose:
-                        logger.info(f"  ✗ {host}: {e}")
+                    logger.info(f"  ✗ {host}: {e}")
     
-    if verbose and not problems:
+    if not problems:
         logger.info(f"  All {checked_count} hosts resolve correctly")
     
     return problems, checked_count
 
 
-def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=None, verbose=True, fail_on_none=False):
+def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=None, fail_on_none=False):
     """
     Get the load balancer IP from ingresses matching the specified class.
     
@@ -853,14 +800,12 @@ def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=No
         networking_v1: Kubernetes NetworkingV1Api client
         ingress_class_name: Ingress class name to filter by
         namespace: Specific namespace to check (optional)
-        verbose: Whether to log details (default: True)
         fail_on_none: Whether to fail test if IP not found (default: False)
     
     Returns:
         str: Load balancer IP or None
     """
-    if verbose:
-        logger.info(f"Searching for load balancer IP (ingressClassName: {ingress_class_name})...")
+    logger.info(f"Searching for load balancer IP (ingressClassName: {ingress_class_name})...")
     
     try:
         if namespace:
@@ -878,8 +823,7 @@ def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=No
                 
                 for lb in ingress.status.load_balancer.ingress:
                     if lb.ip:
-                        if verbose:
-                            logger.info(f"✓ Found load balancer IP: {lb.ip}")
+                        logger.info(f"✓ Found load balancer IP: {lb.ip}")
                         return lb.ip
         
         logger.warning(f"No load balancer IP found for ingressClassName: {ingress_class_name}")
@@ -1003,7 +947,7 @@ def _get_certificate_detailed_error(custom_api, cert_name, namespace, cert_messa
         return cert_message
 
 
-def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, poll_interval=10, verbose=True):
+def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, poll_interval=10):
     """
     Wait for a cert-manager Certificate to reach Ready status.
     
@@ -1013,7 +957,6 @@ def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, po
         namespace: Namespace of the Certificate
         timeout: Maximum time to wait in seconds (default: 600)
         poll_interval: Time between checks in seconds (default: 10)
-        verbose: Whether to print progress updates (default: True)
     
     Returns:
         tuple: (success: bool, status: dict)
@@ -1039,8 +982,7 @@ def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, po
             # Check if certificate is Ready (success case)
             ready_condition = condition_map.get('Ready')
             if ready_condition and ready_condition.get('status') == 'True':
-                if verbose:
-                    logger.info(f"      ✓ Certificate Ready (took {int(elapsed)}s)")
+                logger.info(f"      ✓ Certificate Ready (took {int(elapsed)}s)")
                 return True, cert.get('status', {})
             
             # Check Issuing condition for terminal failures
@@ -1091,19 +1033,16 @@ def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, po
                     return False, status_with_error
                 
                 # Not a terminal failure, log progress
-                if verbose:
-                    logger.info(f"      ⏳ Status: {ready_reason} - {ready_message}")
+                logger.info(f"      ⏳ Status: {ready_reason} - {ready_message}")
             
-            if verbose and not any(c.get('type') == 'Ready' for c in conditions):
+            if not any(c.get('type') == 'Ready' for c in conditions):
                 logger.info(f"      ⏳ Waiting for Ready condition... ({int(elapsed)}s elapsed)")
             
         except ApiException as e:
             if e.status == 404:
-                if verbose:
-                    logger.info(f"      ⏳ Certificate not found yet... ({int(elapsed)}s elapsed)")
+                logger.info(f"      ⏳ Certificate not found yet... ({int(elapsed)}s elapsed)")
             else:
-                if verbose:
-                    logger.info(f"      ⚠ API error: {e}")
+                logger.info(f"      ⚠ API error: {e}")
         
         time.sleep(poll_interval)
         elapsed = time.time() - start_time
@@ -1133,13 +1072,12 @@ def wait_for_certificate_ready(custom_api, cert_name, namespace, timeout=600, po
     except:
         pass  # Use the basic timeout message
     
-    if verbose:
-        logger.info(f"      ✗ {detailed_error}")
+    logger.info(f"      ✗ {detailed_error}")
     
     return False, {'detailed_error': detailed_error}
 
 
-def validate_certificate_secret(core_v1, secret_name, namespace, expected_hostname=None, verbose=True):
+def validate_certificate_secret(core_v1, secret_name, namespace, expected_hostname=None):
     """
     Validate TLS secret contains valid certificate.
     
@@ -1148,7 +1086,6 @@ def validate_certificate_secret(core_v1, secret_name, namespace, expected_hostna
         secret_name: Name of the TLS secret
         namespace: Namespace of the secret
         expected_hostname: Expected hostname in certificate SAN (optional)
-        verbose: Print detailed status (default: True)
     
     Returns:
         tuple: (problems, cert_info_dict)
@@ -1210,7 +1147,7 @@ def validate_certificate_secret(core_v1, secret_name, namespace, expected_hostna
             if expected_hostname not in san_names and expected_hostname != common_name:
                 problems.append(f"Hostname '{expected_hostname}' not in certificate (CN: {common_name}, SANs: {san_names})")
         
-        if verbose and not problems:
+        if not problems:
             logger.info(f"      CN: {common_name}")
             logger.info(f"      Issuer: {issuer_name}")
             logger.info(f"      Valid: {not_before} to {not_after}")
@@ -1223,14 +1160,13 @@ def validate_certificate_secret(core_v1, secret_name, namespace, expected_hostna
     return problems, cert_info
 
 
-def validate_https_certificate(url, expected_hostname=None, verbose=True):
+def validate_https_certificate(url, expected_hostname=None):
     """
     Validate HTTPS certificate via SSL connection.
     
     Args:
         url: HTTPS URL to test
         expected_hostname: Expected hostname in certificate (optional)
-        verbose: Print detailed status (default: True)
     
     Returns:
         tuple: (problems, response_info)
@@ -1279,7 +1215,7 @@ def validate_https_certificate(url, expected_hostname=None, verbose=True):
                 if check_hostname not in san_names and check_hostname != common_name:
                     problems.append(f"Hostname mismatch: expected '{check_hostname}', cert CN: {common_name}, SANs: {san_names}")
                 
-                if verbose and not problems:
+                if not problems:
                     logger.info(f"      CN: {common_name}")
                     logger.info(f"      Issuer: {issuer_name}")
                     logger.info(f"      Expires: {not_after}")
@@ -1298,7 +1234,7 @@ def validate_https_certificate(url, expected_hostname=None, verbose=True):
 # HTTP ENDPOINT VALIDATION
 # =============================================================================
 
-def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3, retry_delays=None, verbose=True):
+def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3, retry_delays=None):
     """
     Validate mendhak/http-https-echo application response.
     
@@ -1308,7 +1244,6 @@ def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3
         app_name: App name for error messages (defaults to hostname)
         max_retries: Number of retry attempts (default: 3)
         retry_delays: List of delay seconds between retries
-        verbose: Print detailed status (default: True)
     
     Returns:
         tuple: (problems, response_data)
@@ -1320,7 +1255,7 @@ def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3
     
     for attempt in range(max_retries):
         try:
-            if verbose and attempt > 0:
+            if attempt > 0:
                 logger.info(f"      Retry {attempt}/{max_retries - 1} after {retry_delays[attempt - 1]}s...")
             
             response = requests.get(url, timeout=30, verify=True)
@@ -1329,11 +1264,9 @@ def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3
                 error_msg = f"HTTP {response.status_code}"
                 if attempt == max_retries - 1:
                     problems.append(f"{app_name} - {error_msg}")
-                    if verbose:
-                        logger.info(f"      ✗ {error_msg}")
+                    logger.info(f"      ✗ {error_msg}")
                 else:
-                    if verbose:
-                        logger.info(f"      ✗ {error_msg}, retrying in {retry_delays[attempt]}s...")
+                    logger.info(f"      ✗ {error_msg}, retrying in {retry_delays[attempt]}s...")
                     time.sleep(retry_delays[attempt])
                     continue
             
@@ -1344,11 +1277,9 @@ def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3
                 error_msg = "Response is not valid JSON"
                 if attempt == max_retries - 1:
                     problems.append(f"{app_name} - {error_msg}")
-                    if verbose:
-                        logger.info(f"      ✗ {error_msg}")
+                    logger.info(f"      ✗ {error_msg}")
                 else:
-                    if verbose:
-                        logger.info(f"      ✗ {error_msg}, retrying in {retry_delays[attempt]}s...")
+                    logger.info(f"      ✗ {error_msg}, retrying in {retry_delays[attempt]}s...")
                     time.sleep(retry_delays[attempt])
                     continue
             
@@ -1369,20 +1300,17 @@ def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3
                     display_key = json_key
                 
                 if actual_value == expected_value:
-                    if verbose:
-                        logger.info(f"      ✓ {display_key}: {actual_value}")
+                    logger.info(f"      ✓ {display_key}: {actual_value}")
                 else:
                     error_msg = f"{display_key}: expected '{expected_value}', got '{actual_value}'"
-                    if verbose:
-                        logger.info(f"      ✗ {error_msg}")
+                    logger.info(f"      ✗ {error_msg}")
                     field_errors.append(f"{app_name} - {error_msg}")
             
             if field_errors:
                 if attempt == max_retries - 1:
                     problems.extend(field_errors)
                 else:
-                    if verbose:
-                        logger.info(f"      Validation failed, retrying in {retry_delays[attempt]}s...")
+                    logger.info(f"      Validation failed, retrying in {retry_delays[attempt]}s...")
                     time.sleep(retry_delays[attempt])
                     continue
             
@@ -1393,27 +1321,23 @@ def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3
             error_msg = f"SSL error: {e}"
             if attempt == max_retries - 1:
                 problems.append(f"{app_name} - {error_msg}")
-                if verbose:
-                    logger.info(f"      ✗ {error_msg}")
+                logger.info(f"      ✗ {error_msg}")
             else:
-                if verbose:
-                    logger.info(f"      ✗ {error_msg}, retrying in {retry_delays[attempt]}s...")
+                logger.info(f"      ✗ {error_msg}, retrying in {retry_delays[attempt]}s...")
                 time.sleep(retry_delays[attempt])
         except Exception as e:
             error_msg = f"Request failed: {e}"
             if attempt == max_retries - 1:
                 problems.append(f"{app_name} - {error_msg}")
-                if verbose:
-                    logger.info(f"      ✗ {error_msg}")
+                logger.info(f"      ✗ {error_msg}")
             else:
-                if verbose:
-                    logger.info(f"      ✗ {error_msg}, retrying in {retry_delays[attempt]}s...")
+                logger.info(f"      ✗ {error_msg}, retrying in {retry_delays[attempt]}s...")
                 time.sleep(retry_delays[attempt])
     
     return problems, response_data
 
 
-def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries=3, retry_delays=None, verbose=True):
+def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries=3, retry_delays=None):
     """
     Validate environment variables in traefik/whoami application response.
     
@@ -1423,7 +1347,6 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
         app_name: Application name for logging
         max_retries: Maximum number of retry attempts
         retry_delays: List of delays between retries
-        verbose: Enable detailed logging
     
     Returns:
         tuple: (problems_list, env_vars_dict)
@@ -1438,23 +1361,20 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
     
     for attempt in range(1, max_retries + 1):
         try:
-            if verbose and attempt > 1:
+            if attempt > 1:
                 logger.info(f"      Retry {attempt}/{max_retries}...")
             
             request_url = f"{url}?env=true"
-            if verbose:
-                logger.info(f"      GET {request_url}")
+            logger.info(f"      GET {request_url}")
             
             response = requests.get(request_url, timeout=30, verify=True)
             
-            if verbose:
-                logger.info(f"      Status: {response.status_code}")
+            logger.info(f"      Status: {response.status_code}")
             
             if response.status_code != 200:
                 if attempt < max_retries:
                     delay = retry_delays[attempt - 1]
-                    if verbose:
-                        logger.info(f"      ⏳ Waiting {delay}s before retry...")
+                    logger.info(f"      ⏳ Waiting {delay}s before retry...")
                     time.sleep(delay)
                     continue
                 else:
@@ -1462,8 +1382,7 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
                     return problems, {}
             
             text = response.text
-            if verbose:
-                logger.info(f"      ✓ Response received, parsing environment variables...")
+            logger.info(f"      ✓ Response received, parsing environment variables...")
             
             lines = text.split('\n')
             env_vars = {}
@@ -1479,8 +1398,7 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
                     key, _, value = line.partition('=')
                     env_vars[key] = value
             
-            if verbose:
-                logger.info(f"      ✓ Found {len(env_vars)} environment variables")
+            logger.info(f"      ✓ Found {len(env_vars)} environment variables")
             
             missing_vars = []
             wrong_values = []
@@ -1497,7 +1415,7 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
             if wrong_values:
                 problems.append(f"{app_name}: Wrong values: {', '.join(wrong_values)}")
             
-            if verbose and not problems:
+            if not problems:
                 logger.info(f"      ✓ All {len(expected_env_vars)} expected env vars validated")
             
             return problems, env_vars
@@ -1505,9 +1423,8 @@ def validate_whoami_env_vars(url, expected_env_vars, app_name="app", max_retries
         except requests.exceptions.RequestException as e:
             if attempt < max_retries:
                 delay = retry_delays[attempt - 1]
-                if verbose:
-                    logger.info(f"      ⚠ Request failed: {str(e)}")
-                    logger.info(f"      ⏳ Waiting {delay}s before retry...")
+                logger.info(f"      ⚠ Request failed: {str(e)}")
+                logger.info(f"      ⏳ Waiting {delay}s before retry...")
                 time.sleep(delay)
             else:
                 problems.append(f"{app_name}: Request failed after {max_retries} retries - {str(e)}")

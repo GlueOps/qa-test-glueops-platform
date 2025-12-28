@@ -11,7 +11,6 @@ Required environment variables:
 - CAPTAIN_DOMAIN: The captain domain (e.g., nonprod.foobar.onglueops.rocks)
 """
 
-import os
 import logging
 import pytest
 

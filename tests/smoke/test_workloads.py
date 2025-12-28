@@ -41,7 +41,7 @@ def test_pod_health(core_v1, platform_namespaces):
     logger.info("POD HEALTH CHECK")
     logger.info("="*70)
     
-    problems = validate_pod_health(core_v1, platform_namespaces, verbose=True)
+    problems = validate_pod_health(core_v1, platform_namespaces)
     
     logger.info("\n" + "="*70)
     logger.info("SUMMARY")
@@ -72,9 +72,9 @@ def test_failed_jobs(batch_v1, platform_namespaces):
     logger.info("FAILED JOBS CHECK")
     logger.info("="*70)
     
-    exclude_jobs = []  # No exclusions - all failed jobs should be caught
+    exclude_jobs: list[str] = []  # No exclusions - all failed jobs should be caught
     
-    problems, warnings = validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs, verbose=True)
+    problems, warnings = validate_failed_jobs(batch_v1, platform_namespaces, exclude_jobs)
     
     logger.info("\n" + "="*70)
     logger.info("SUMMARY")
@@ -113,7 +113,7 @@ def test_ingress_validity(networking_v1, platform_namespaces):
     logger.info("INGRESS VALIDITY CHECK")
     logger.info("="*70)
     
-    problems, total_ingresses = validate_ingress_configuration(networking_v1, platform_namespaces, verbose=True)
+    problems, total_ingresses = validate_ingress_configuration(networking_v1, platform_namespaces)
     
     logger.info("\n" + "="*70)
     logger.info("SUMMARY")
@@ -151,7 +151,7 @@ def test_ingress_dns(networking_v1, platform_namespaces):
     logger.info("INGRESS DNS CHECK")
     logger.info("="*70)
     
-    problems, checked_count = validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1', verbose=True)
+    problems, checked_count = validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1')
     
     logger.info("\n" + "="*70)
     logger.info("SUMMARY")

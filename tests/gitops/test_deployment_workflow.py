@@ -5,7 +5,6 @@ Tests the end-to-end GitOps workflow for deploying applications
 through the GlueOps platform.
 """
 import pytest
-from pathlib import Path
 import uuid
 import logging
 from tests.helpers.assertions import (
@@ -18,7 +17,6 @@ from tests.helpers.k8s import validate_http_debug_app
 from tests.helpers.github import create_github_file
 from tests.helpers.argocd import wait_for_appset_apps_created_and_healthy, calculate_expected_app_count
 from tests.helpers.utils import print_section_header, print_summary_list
-from tests.helpers.browser import get_browser_connection, create_incognito_context, cleanup_browser
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +97,7 @@ def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo,
             repo=repo,
             file_path=file_path,
             content=file_content,
-            commit_message=f"Add {app_name} application with hostname {hostname}",
-            verbose=True,
-            log_content=True
+            commit_message=f"Add {app_name} application with hostname {hostname}"
         )
     
     print_summary_list(
@@ -116,7 +112,6 @@ def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo,
         custom_api,
         namespace=captain_manifests['namespace'],
         expected_count=expected_total,
-        verbose=True
     )
     
     if not apps_ready:
@@ -125,17 +120,17 @@ def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo,
     # Check ArgoCD application health and sync status
     print_section_header("STEP 2: Checking ArgoCD Application Status")
     
-    assert_argocd_healthy(custom_api, namespace_filter=None, verbose=True)
+    assert_argocd_healthy(custom_api, namespace_filter=None)
     
     # Check pod health across all platform namespaces
     print_section_header("STEP 3: Checking Pod Health")
     
-    assert_pods_healthy(core_v1, platform_namespaces, verbose=True)
+    assert_pods_healthy(core_v1, platform_namespaces)
     
     # Validate Ingress configuration
     print_section_header("STEP 4: Validating Ingress Configuration")
     
-    total_ingresses = assert_ingress_valid(networking_v1, platform_namespaces, verbose=True)
+    total_ingresses = assert_ingress_valid(networking_v1, platform_namespaces)
     
     # Validate DNS resolution for Ingress hosts
     print_section_header("STEP 5: Validating Ingress DNS Resolution")
@@ -144,7 +139,6 @@ def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo,
         networking_v1,
         platform_namespaces,
         dns_server='1.1.1.1',
-        verbose=True
     )
     
     # Validate JSON responses from each deployed application
@@ -166,7 +160,6 @@ def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo,
             app_name=app_name,
             max_retries=3,
             retry_delays=[10, 30, 60],
-            verbose=True
         )
         
         if problems:

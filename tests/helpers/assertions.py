@@ -43,64 +43,57 @@ def _log_validation_failure(failure_title, problems, max_display=10):
         logger.info(f"   ... and {len(problems) - max_display} more")
 
 
-def assert_argocd_healthy(custom_api, namespace_filter=None, verbose=True):
+def assert_argocd_healthy(custom_api, namespace_filter=None):
     """
     Validate ArgoCD apps and fail test if unhealthy.
     
     Args:
         custom_api: Kubernetes CustomObjectsApi client
         namespace_filter: Optional namespace filter
-        verbose: Print detailed status (default: True)
     
     Raises:
         pytest.fail: If any ArgoCD application is unhealthy
     """
-    if verbose:
-        logger.info(f"\n🔍 Validating ArgoCD applications...\n")
+    logger.info(f"\n🔍 Validating ArgoCD applications...\n")
     
-    problems = validate_all_argocd_apps(custom_api, namespace_filter, verbose)
+    problems = validate_all_argocd_apps(custom_api, namespace_filter)
     
     if problems:
         _log_validation_failure("ARGOCD VALIDATION FAILED", problems)
         pytest.fail(f"\n❌ ArgoCD validation failed with {len(problems)} error(s)")
     
-    if verbose:
-        logger.info(f"\n✓ All ArgoCD applications are Healthy and Synced")
+    logger.info(f"\n✓ All ArgoCD applications are Healthy and Synced")
 
 
-def assert_pods_healthy(core_v1, platform_namespaces, verbose=True):
+def assert_pods_healthy(core_v1, platform_namespaces):
     """
     Validate pod health and fail test if unhealthy.
     
     Args:
         core_v1: Kubernetes CoreV1Api client
         platform_namespaces: List of namespaces to check
-        verbose: Print detailed status (default: True)
     
     Raises:
         pytest.fail: If any pod is unhealthy
     """
-    if verbose:
-        logger.info(f"\n🔍 Validating pod health across platform namespaces...\n")
+    logger.info(f"\n🔍 Validating pod health across platform namespaces...\n")
     
-    problems = validate_pod_health(core_v1, platform_namespaces, verbose)
+    problems = validate_pod_health(core_v1, platform_namespaces)
     
     if problems:
         _log_validation_failure("POD HEALTH VALIDATION FAILED", problems)
         pytest.fail(f"\n❌ Pod health validation failed with {len(problems)} error(s)")
     
-    if verbose:
-        logger.info(f"\n✓ All pods are healthy")
+    logger.info(f"\n✓ All pods are healthy")
 
 
-def assert_ingress_valid(networking_v1, platform_namespaces, verbose=True):
+def assert_ingress_valid(networking_v1, platform_namespaces):
     """
     Validate ingress configuration and fail test if invalid.
     
     Args:
         networking_v1: Kubernetes NetworkingV1Api client
         platform_namespaces: List of namespaces to check
-        verbose: Print detailed status (default: True)
     
     Returns:
         int: Total number of ingresses checked
@@ -108,22 +101,20 @@ def assert_ingress_valid(networking_v1, platform_namespaces, verbose=True):
     Raises:
         pytest.fail: If any ingress is invalid
     """
-    if verbose:
-        logger.info(f"\n🔍 Checking Ingress resources across platform...\n")
+    logger.info(f"\n🔍 Checking Ingress resources across platform...\n")
     
-    problems, total_ingresses = validate_ingress_configuration(networking_v1, platform_namespaces, verbose)
+    problems, total_ingresses = validate_ingress_configuration(networking_v1, platform_namespaces)
     
     if problems:
         _log_validation_failure("INGRESS CONFIGURATION VALIDATION FAILED", problems)
         pytest.fail(f"\n❌ Ingress configuration validation failed with {len(problems)} error(s)")
     
-    if verbose:
-        logger.info(f"\n✓ All {total_ingresses} Ingress resources are properly configured")
+    logger.info(f"\n✓ All {total_ingresses} Ingress resources are properly configured")
     
     return total_ingresses
 
 
-def assert_ingress_dns_valid(networking_v1, platform_namespaces, dns_server='1.1.1.1', verbose=True):
+def assert_ingress_dns_valid(networking_v1, platform_namespaces, dns_server='1.1.1.1'):
     """
     Validate ingress DNS resolution and fail test if invalid.
     
@@ -131,7 +122,6 @@ def assert_ingress_dns_valid(networking_v1, platform_namespaces, dns_server='1.1
         networking_v1: Kubernetes NetworkingV1Api client
         platform_namespaces: List of namespaces to check
         dns_server: DNS server to query (default: '1.1.1.1')
-        verbose: Print detailed status (default: True)
     
     Returns:
         int: Number of hosts checked
@@ -139,22 +129,20 @@ def assert_ingress_dns_valid(networking_v1, platform_namespaces, dns_server='1.1
     Raises:
         pytest.fail: If any DNS resolution fails
     """
-    if verbose:
-        logger.info(f"\n🔍 Checking DNS resolution for all Ingress hosts...\n")
+    logger.info(f"\n🔍 Checking DNS resolution for all Ingress hosts...\n")
     
-    problems, checked_count = validate_ingress_dns(networking_v1, platform_namespaces, dns_server, verbose)
+    problems, checked_count = validate_ingress_dns(networking_v1, platform_namespaces, dns_server)
     
     if problems:
         _log_validation_failure("DNS RESOLUTION VALIDATION FAILED", problems)
         pytest.fail(f"\n❌ DNS validation failed with {len(problems)} error(s)")
     
-    if verbose:
-        logger.info(f"\n✓ All {checked_count} Ingress hosts resolve correctly via DNS")
+    logger.info(f"\n✓ All {checked_count} Ingress hosts resolve correctly via DNS")
     
     return checked_count
 
 
-def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', verbose=True):
+def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod'):
     """
     Wait for multiple certificates to be ready and fail test if any fail.
     
@@ -162,7 +150,6 @@ def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', v
         custom_api: Kubernetes CustomObjectsApi client
         cert_info_list: List of dicts with 'name' and 'cert_name' keys
         namespace: Namespace of certificates (default: 'nonprod')
-        verbose: Print status updates (default: True)
     
     Returns:
         list: List of certificate statuses
@@ -170,23 +157,20 @@ def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', v
     Raises:
         pytest.fail: If any certificate fails to become ready
     """
-    if verbose:
-        logger.info(f"\n🔍 Waiting for {len(cert_info_list)} certificate(s) to be issued...\n")
+    logger.info(f"\n🔍 Waiting for {len(cert_info_list)} certificate(s) to be issued...\n")
     
     problems = []
     statuses = []
     
     for idx, app in enumerate(cert_info_list, 1):
-        if verbose:
-            logger.info(f"[{idx}/{len(cert_info_list)}] Waiting for certificate: {app['name']}")
-            logger.info(f"      Hostname: {app.get('hostname', 'N/A')}")
-            logger.info(f"      Namespace: {namespace}")
+        logger.info(f"[{idx}/{len(cert_info_list)}] Waiting for certificate: {app['name']}")
+        logger.info(f"      Hostname: {app.get('hostname', 'N/A')}")
+        logger.info(f"      Namespace: {namespace}")
         
         success, status = wait_for_certificate_ready(
             custom_api,
             cert_name=app['cert_name'],
-            namespace=namespace,
-            verbose=verbose
+            namespace=namespace
         )
         
         statuses.append(status)
@@ -195,24 +179,21 @@ def assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod', v
             # Use detailed_error from status if available
             detailed = status.get('detailed_error', 'Certificate not ready after timeout')
             error_msg = f"{app['name']}: {detailed}"
-            if verbose:
-                logger.info(f"      ✗ Failed\n")
+            logger.info(f"      ✗ Failed\n")
             problems.append(error_msg)
         else:
-            if verbose:
-                logger.info(f"      ✓ Certificate is Ready!\n")
+            logger.info(f"      ✓ Certificate is Ready!\n")
     
     if problems:
         _log_validation_failure("CERTIFICATE ISSUANCE FAILED", problems)
         pytest.fail(f"\n❌ Certificate validation failed with {len(problems)} error(s)")
     
-    if verbose:
-        logger.info(f"\n✓ All {len(cert_info_list)} certificates issued successfully")
+    logger.info(f"\n✓ All {len(cert_info_list)} certificates issued successfully")
     
     return statuses
 
 
-def assert_tls_secrets_valid(core_v1, secret_info_list, namespace='nonprod', verbose=True):
+def assert_tls_secrets_valid(core_v1, secret_info_list, namespace='nonprod'):
     """
     Validate multiple TLS secrets and fail test if any are invalid.
     
@@ -220,7 +201,6 @@ def assert_tls_secrets_valid(core_v1, secret_info_list, namespace='nonprod', ver
         core_v1: Kubernetes CoreV1Api client
         secret_info_list: List of dicts with 'name', 'secret_name', and 'hostname' keys
         namespace: Namespace of secrets (default: 'nonprod')
-        verbose: Print status updates (default: True)
     
     Returns:
         list: List of certificate info dicts
@@ -228,48 +208,41 @@ def assert_tls_secrets_valid(core_v1, secret_info_list, namespace='nonprod', ver
     Raises:
         pytest.fail: If any TLS secret is invalid
     """
-    if verbose:
-        logger.info(f"\n🔍 Validating {len(secret_info_list)} TLS secret(s)...\n")
+    logger.info(f"\n🔍 Validating {len(secret_info_list)} TLS secret(s)...\n")
     
     all_problems = []
     cert_infos = []
     
     for idx, app in enumerate(secret_info_list, 1):
-        if verbose:
-            logger.info(f"[{idx}/{len(secret_info_list)}] Validating TLS secret: {app['secret_name']}")
-            logger.info(f"      Hostname: {app['hostname']}")
+        logger.info(f"[{idx}/{len(secret_info_list)}] Validating TLS secret: {app['secret_name']}")
+        logger.info(f"      Hostname: {app['hostname']}")
         
         problems, cert_info = validate_certificate_secret(
             core_v1,
             secret_name=app['secret_name'],
             namespace=namespace,
-            expected_hostname=app['hostname'],
-            verbose=verbose
+            expected_hostname=app['hostname']
         )
         
         if problems:
-            if verbose:
-                logger.info(f"      ✗ Secret validation failed")
+            logger.info(f"      ✗ Secret validation failed")
             all_problems.extend(problems)
         else:
-            if verbose:
-                logger.info(f"      ✓ TLS secret is valid")
+            logger.info(f"      ✓ TLS secret is valid")
             cert_infos.append(cert_info)
         
-        if verbose:
-            logger.info("")
+        logger.info("")
     
     if all_problems:
         _log_validation_failure("TLS SECRET VALIDATION FAILED", all_problems)
         pytest.fail(f"\n❌ TLS secret validation failed with {len(all_problems)} error(s)")
     
-    if verbose:
-        logger.info(f"\n✓ All {len(secret_info_list)} TLS secrets are valid")
+    logger.info(f"\n✓ All {len(secret_info_list)} TLS secrets are valid")
     
     return cert_infos
 
 
-def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validate_app=False, verbose=True):
+def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validate_app=False):
     """
     Validate multiple HTTPS endpoints and fail test if any are invalid.
     
@@ -277,15 +250,13 @@ def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validat
         endpoint_info_list: List of dicts with 'name', 'hostname', and 'url' keys
         validate_cert: Whether to validate HTTPS certificate (default: True)
         validate_app: Whether to validate http-debug app response (default: False)
-        verbose: Print status updates (default: True)
     
     Raises:
         pytest.fail: If any HTTPS endpoint validation fails
     """
     import requests
     
-    if verbose:
-        logger.info(f"\n🔍 Testing {len(endpoint_info_list)} HTTPS endpoint(s)...\n")
+    logger.info(f"\n🔍 Testing {len(endpoint_info_list)} HTTPS endpoint(s)...\n")
     
     all_problems = []
     
@@ -294,70 +265,57 @@ def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validat
         hostname = app['hostname']
         url = app['url']
         
-        if verbose:
-            logger.info(f"[{idx}/{len(endpoint_info_list)}] {app_name}")
-            logger.info(f"      URL: {url}")
+        logger.info(f"[{idx}/{len(endpoint_info_list)}] {app_name}")
+        logger.info(f"      URL: {url}")
         
         # Validate HTTPS certificate if requested
         if validate_cert:
-            if verbose:
-                logger.info(f"      Testing HTTPS certificate...")
+            logger.info(f"      Testing HTTPS certificate...")
             
             cert_problems, response_info = validate_https_certificate(
                 url=url,
-                expected_hostname=hostname,
-                verbose=verbose
+                expected_hostname=hostname
             )
             
             if cert_problems:
-                if verbose:
-                    logger.info(f"      ✗ HTTPS certificate validation failed")
+                logger.info(f"      ✗ HTTPS certificate validation failed")
                 all_problems.extend([f"{app_name}: {p}" for p in cert_problems])
             else:
-                if verbose:
-                    logger.info(f"      ✓ HTTPS certificate is valid")
+                logger.info(f"      ✓ HTTPS certificate is valid")
         
         # Validate http-debug app if requested
         if validate_app:
             app_problems, response_data = validate_http_debug_app(
                 url=url,
                 expected_hostname=hostname,
-                app_name=app_name,
-                verbose=verbose
+                app_name=app_name
             )
             
             if app_problems:
                 all_problems.extend(app_problems)
         else:
             # Just make a basic HTTP request to verify endpoint works
-            if verbose:
-                logger.info(f"      Making HTTPS request...")
+            logger.info(f"      Making HTTPS request...")
             try:
                 response = requests.get(url, timeout=30, verify=True)
                 if response.status_code == 200:
-                    if verbose:
-                        logger.info(f"      ✓ HTTP {response.status_code} - Application responding")
+                    logger.info(f"      ✓ HTTP {response.status_code} - Application responding")
                 else:
                     error_msg = f"Unexpected status code: HTTP {response.status_code}"
-                    if verbose:
-                        logger.info(f"      ✗ {error_msg}")
+                    logger.info(f"      ✗ {error_msg}")
                     all_problems.append(f"{app_name}: {error_msg}")
             except requests.exceptions.SSLError as e:
                 error_msg = f"SSL error: {e}"
-                if verbose:
-                    logger.info(f"      ✗ {error_msg}")
+                logger.info(f"      ✗ {error_msg}")
                 all_problems.append(f"{app_name}: {error_msg}")
             except Exception as e:
                 error_msg = f"Request failed: {e}"
-                if verbose:
-                    logger.info(f"      ✗ {error_msg}")
+                logger.info(f"      ✗ {error_msg}")
                 all_problems.append(f"{app_name}: {error_msg}")
         
-        if verbose:
-            logger.info("")
+        logger.info("")
     
-    if verbose:
-        logger.info(f"\n✓ All {len(endpoint_info_list)} HTTPS endpoints are working")
+    logger.info(f"\n✓ All {len(endpoint_info_list)} HTTPS endpoints are working")
     
     if all_problems:
         _log_validation_failure("HTTPS VALIDATION FAILED", all_problems)

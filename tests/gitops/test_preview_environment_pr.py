@@ -14,7 +14,9 @@ import os
 import time
 import uuid
 import logging
-from pathlib import Path
+from github.Organization import Organization
+from github.NamedUser import NamedUser
+from github.AuthenticatedUser import AuthenticatedUser
 
 from tests.helpers.github import (
     get_github_client,
@@ -114,6 +116,7 @@ def test_preview_environment_pr_workflow(
     g = get_github_client(github_token)
     
     # Get organization
+    org: Organization | NamedUser | AuthenticatedUser
     try:
         org = g.get_organization(org_name)
     except Exception:
@@ -158,7 +161,7 @@ def test_preview_environment_pr_workflow(
         # Cleanup - Delete repo if exists from prior failed run
         # ================================================================
         next_step("Pre-test Cleanup")
-        delete_repo_if_exists(org, test_repo_name, verbose=True)
+        delete_repo_if_exists(org, test_repo_name)
         
         # ================================================================
         # Create public test repository
@@ -171,8 +174,7 @@ def test_preview_environment_pr_workflow(
             org=org,
             repo_name=test_repo_name,
             description=f"Preview environment test - {repo_name}",
-            private=False,  # Public repo for screenshot without auth
-            verbose=True
+            private=False  # Public repo for screenshot without auth
         )
         
         # Log actual repo name (GitHub may have transformed it)
@@ -193,8 +195,7 @@ def test_preview_environment_pr_workflow(
         create_branch(
             repo=test_repo,
             branch_name=first_branch,
-            source_branch="main",
-            verbose=True
+            source_branch="main"
         )
         
         # Create dummy commit on the branch
@@ -203,8 +204,7 @@ def test_preview_environment_pr_workflow(
             branch_name=first_branch,
             file_path="preview-test-1.md",
             content=f"# Preview Environment Test\n\nCreated at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n",
-            commit_message="creating PR for preview environments",
-            verbose=True
+            commit_message="creating PR for preview environments"
         )
         
         # ================================================================
@@ -217,8 +217,7 @@ def test_preview_environment_pr_workflow(
             title="creating PR for preview environments",
             body="This PR tests the preview environment workflow.\n\nThis is the first PR that will be closed after 30 seconds.",
             head_branch=first_branch,
-            base_branch="main",
-            verbose=True
+            base_branch="main"
         )
         
         logger.info(f"PR URL: {first_pr.html_url}")
@@ -242,7 +241,7 @@ def test_preview_environment_pr_workflow(
         display_progress_bar(wait_time=5, interval=5, description="Waiting before closing PR")
         
         logger.info("Closing first PR...")
-        close_pull_request(first_pr, verbose=True)
+        close_pull_request(first_pr)
         
         # ================================================================
         # Create second branch with another dummy commit
@@ -254,8 +253,7 @@ def test_preview_environment_pr_workflow(
         create_branch(
             repo=test_repo,
             branch_name=second_branch,
-            source_branch="main",
-            verbose=True
+            source_branch="main"
         )
         
         create_dummy_commit(
@@ -263,8 +261,7 @@ def test_preview_environment_pr_workflow(
             branch_name=second_branch,
             file_path="preview-test-2.md",
             content=f"# Preview Environment Test - Second PR\n\nCreated at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n",
-            commit_message="Second commit for preview environment test",
-            verbose=True
+            commit_message="Second commit for preview environment test"
         )
         
         # ================================================================
@@ -277,8 +274,7 @@ def test_preview_environment_pr_workflow(
             title="Second PR for preview environment test",
             body="This is the second PR that will be merged.",
             head_branch=second_branch,
-            base_branch="main",
-            verbose=True
+            base_branch="main"
         )
         
         logger.info(f"Second PR URL: {second_pr.html_url}")
@@ -296,8 +292,7 @@ def test_preview_environment_pr_workflow(
         
         merge_pull_request(
             pr=second_pr,
-            merge_method="merge",
-            verbose=True
+            merge_method="merge"
         )
         
         # ================================================================
@@ -327,7 +322,7 @@ def test_preview_environment_pr_workflow(
         print_section_header("CLEANUP: Deleting Test Repository")
         if test_repo:
             try:
-                delete_repo(test_repo, verbose=True)
+                delete_repo(test_repo)
             except Exception as e:
                 logger.warning(f"⚠️  Failed to delete test repository: {e}")
         else:

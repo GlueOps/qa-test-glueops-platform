@@ -5,6 +5,9 @@ import sys
 from kubernetes import client, config
 from pathlib import Path
 from github import Github, GithubException
+from github.Organization import Organization
+from github.NamedUser import NamedUser
+from github.AuthenticatedUser import AuthenticatedUser
 import time
 import logging
 import allure
@@ -13,10 +16,11 @@ from tests.helpers.k8s import (
     get_platform_namespaces,
     wait_for_argocd_apps_deleted,
     force_sync_argocd_app,
-    wait_for_argocd_app_healthy,
 )
 from tests.helpers.argocd import (
     wait_for_argocd_apps_by_project_deleted,
+    wait_for_argocd_app_healthy,
+    refresh_and_wait_for_argocd_app,
 )
 from tests.helpers.github import (
     delete_directory_contents,
@@ -366,8 +370,7 @@ def captain_manifests(
     # Connect to captain repo
     g, captain_repo = get_captain_repo(
         token=captain_domain_github_token,
-        repo_url=captain_domain_repo_url,
-        verbose=True
+        repo_url=captain_domain_repo_url
     )
     
     # Define manifest paths
@@ -385,20 +388,28 @@ def captain_manifests(
     # Delete in reverse order of creation
     for i, (name, path) in enumerate(reversed(list(manifest_paths.items())), 1):
         logger.info(f"   {i}. Deleting {name}...")
-        delete_file_if_exists(captain_repo, path, f"Pre-cleanup: remove {name}", verbose=True)
+        commit_sha = delete_file_if_exists(captain_repo, path, f"Pre-cleanup: remove {name}")
         
-        # Wait for captain-manifests to stabilize after each deletion
-        logger.info(f"      Waiting for captain-manifests to stabilize...")
-        app_healthy = wait_for_argocd_app_healthy(
-            custom_api,
-            app_name="captain-manifests",
-            namespace="glueops-core",
-            verbose=False
-        )
-        if not app_healthy:
-            logger.warning(f"      ⚠ captain-manifests did not stabilize, continuing anyway")
-        else:
-            logger.info(f"      ✓ captain-manifests stable")
+        # Only wait if a file was actually deleted (commit_sha will be None if file didn't exist)
+        if commit_sha:
+            # Trigger ArgoCD refresh to pick up Git changes, then wait for stabilization
+            logger.info(f"      Waiting for captain-manifests to stabilize...")
+            try:
+                # Refresh and wait for captain-manifests to become healthy and synced to the deletion commit
+                app_healthy = refresh_and_wait_for_argocd_app(
+                    custom_api,
+                    app_name="captain-manifests",
+                    namespace="glueops-core",
+                    expected_sha=commit_sha  # Validates it's synced to THIS specific commit
+                )
+                if not app_healthy:
+                    logger.error(f"      ❌ captain-manifests did not stabilize after deleting {name}")
+                    logger.error(f"      This may cause test failures. Consider investigating captain-manifests health.")
+                else:
+                    logger.info(f"      ✓ captain-manifests stable")
+            except Exception as e:
+                logger.error(f"      ❌ Exception while waiting for captain-manifests: {e}")
+                logger.error(f"      Continuing anyway, but test may fail...")
     
     # Give GitHub API time to process deletions
     time.sleep(2)
@@ -410,8 +421,7 @@ def captain_manifests(
     logger.info(f"   Checking for Application CRs referencing project '{namespace_name}'...")
     project_apps_deleted = wait_for_argocd_apps_by_project_deleted(
         custom_api,
-        project_name=namespace_name,
-        verbose=True
+        project_name=namespace_name
     )
     
     if project_apps_deleted:
@@ -439,24 +449,21 @@ def captain_manifests(
         captain_repo,
         manifest_paths['namespace'],
         namespace_yaml,
-        f"Create namespace manifest for {namespace_name}",
-        verbose=True
+        f"Create namespace manifest for {namespace_name}"
     )
     
     appproject_result = create_or_update_file(
         captain_repo,
         manifest_paths['appproject'],
         appproject_yaml,
-        f"Create AppProject manifest for {namespace_name}",
-        verbose=True
+        f"Create AppProject manifest for {namespace_name}"
     )
     
     appset_result = create_or_update_file(
         captain_repo,
         manifest_paths['appset'],
         appset_yaml,
-        f"Create ApplicationSet manifest for {namespace_name}",
-        verbose=True
+        f"Create ApplicationSet manifest for {namespace_name}"
     )
     
     # Log commit SHAs for verification
@@ -465,12 +472,19 @@ def captain_manifests(
     logger.info(f"  AppProject:  {appproject_result['commit'].sha[:8]}")
     logger.info(f"  AppSet:      {appset_result['commit'].sha[:8]}")
     
-    # Wait for ArgoCD to sync
-    if sync_wait > 0:
-        logger.info(f"\n⏳ Waiting {sync_wait}s for ArgoCD to sync manifests...")
-        time.sleep(sync_wait)
+    # Wait for captain-manifests ArgoCD Application to become healthy
+    logger.info("")
     
-    logger.info("\n✓ Captain manifests created successfully")
+    captain_app_healthy = wait_for_argocd_app_healthy(
+        custom_api=custom_api,
+        app_name='captain-manifests',
+        namespace='glueops-core',
+    )
+    
+    if not captain_app_healthy:
+        pytest.fail("Captain manifests Application did not become healthy within timeout")
+    
+    logger.info("\n✓ Captain manifests verified successfully")
     logger.info("="*70 + "\n")
     
     # Deploy fixture applications
@@ -536,16 +550,14 @@ def captain_manifests(
             ephemeral_github_repo,
             f"apps/{app_name}/envs/prod/values.yaml",
             values_yaml,
-            f"Add fixture app {app_name}",
-            verbose=False
+            f"Add fixture app {app_name}"
         )
         
         create_github_file(
             ephemeral_github_repo,
             f"apps/{app_name}/envs/prod/env-values.yaml",
             env_values_yaml,
-            f"Add env-values for fixture app {app_name}",
-            verbose=False
+            f"Add env-values for fixture app {app_name}"
         )
         
         # Store metadata with friendly name and GUID for lookups
@@ -569,7 +581,6 @@ def captain_manifests(
         custom_api,
         namespace=namespace_name,
         expected_count=len(fixture_apps_metadata),
-        verbose=True
     )
     
     if not apps_ready:
@@ -601,16 +612,14 @@ def captain_manifests(
         delete_file_if_exists(
             captain_repo,
             manifest_paths['appset'],
-            f"Teardown: remove ApplicationSet for {namespace_name}",
-            verbose=True
+            f"Teardown: remove ApplicationSet for {namespace_name}"
         )
         
         # Step 2: Wait for ArgoCD applications to be deleted
         logger.info("\n⏳ Step 2: Waiting for ArgoCD applications to be deleted...")
         apps_deleted = wait_for_argocd_apps_deleted(
             custom_api,
-            namespace=namespace_name,
-            verbose=True
+            namespace=namespace_name
         )
         
         if not apps_deleted:
@@ -620,8 +629,7 @@ def captain_manifests(
         logger.info("\n⏳ Step 2b: Waiting for Application CRs referencing project to be deleted...")
         project_apps_deleted = wait_for_argocd_apps_by_project_deleted(
             custom_api,
-            project_name=namespace_name,
-            verbose=True
+            project_name=namespace_name
         )
         
         if not project_apps_deleted:
@@ -632,8 +640,7 @@ def captain_manifests(
         delete_file_if_exists(
             captain_repo,
             manifest_paths['appproject'],
-            f"Teardown: remove AppProject for {namespace_name}",
-            verbose=True
+            f"Teardown: remove AppProject for {namespace_name}"
         )
         
         # Step 4: Delete Namespace
@@ -641,8 +648,7 @@ def captain_manifests(
         delete_file_if_exists(
             captain_repo,
             manifest_paths['namespace'],
-            f"Teardown: remove Namespace for {namespace_name}",
-            verbose=True
+            f"Teardown: remove Namespace for {namespace_name}"
         )
         
         # Step 5: Force sync captain-manifests app to clear the "auto-sync will wipe out all resources" state
@@ -651,7 +657,6 @@ def captain_manifests(
             custom_api,
             app_name="captain-manifests",
             namespace="glueops-core",
-            verbose=True
         )
         
         # Give ArgoCD time to process the sync
@@ -665,7 +670,6 @@ def captain_manifests(
             app_name="captain-manifests",
             namespace="glueops-core",
 
-            verbose=True
         )
         
         if not app_healthy:
@@ -794,6 +798,7 @@ def ephemeral_github_repo(request, deployment_config_template_repo, tenant_githu
     g = Github(auth=auth)
     
     # Get destination org/user
+    dest_owner: Organization | NamedUser | AuthenticatedUser
     try:
         dest_owner = g.get_organization(dest_org)
     except GithubException:
@@ -807,7 +812,7 @@ def ephemeral_github_repo(request, deployment_config_template_repo, tenant_githu
     logger.info("\n" + "="*70)
     logger.info("SETUP: Cleaning up orphaned test repositories")
     logger.info("="*70)
-    delete_repos_by_topic(dest_owner, 'createdby-automated-test-delete-me', verbose=True)
+    delete_repos_by_topic(dest_owner, 'createdby-automated-test-delete-me')
     
     # Get template repository
     try:
@@ -823,28 +828,71 @@ def ephemeral_github_repo(request, deployment_config_template_repo, tenant_githu
     logger.info("="*70)
     logger.info(f"Repository name: {test_repo_name}")
     
-    # Create repository from template
+    # Determine ref to use (tag if specified, otherwise default branch)
+    clone_ref = target_tag if target_tag else template_repo.default_branch
+    logger.info(f"Template ref: {clone_ref}")
+    
+    # Create empty repository
     try:
-        test_repo = dest_owner.create_repo_from_template(
+        test_repo = dest_owner.create_repo(
             name=test_repo_name,
-            repo=template_repo,
             description="Ephemeral test repository for GitOps testing",
-            private=False
+            private=False,
+            auto_init=True  # Creates with README.md
         )
-        time.sleep(3)  # Wait for repository to be fully created
         logger.info(f"✓ Repository created: {test_repo.html_url}")
     except GithubException as e:
-        pytest.fail(f"Failed to create repository from template: {e.status} {e.data.get('message', str(e))}")
+        pytest.fail(f"Failed to create repository: {e.status} {e.data.get('message', str(e))}")
     
-    # Set topics for automated cleanup and verify they are set
+    # Set topics IMMEDIATELY for cleanup (before slow operations that might fail)
     logger.info("\n🏷️  Setting repository topics...")
-    set_repo_topics(test_repo, ['createdby-automated-test-delete-me'], verbose=True)
+    set_repo_topics(g, test_repo, ['createdby-automated-test-delete-me'])
     
-    # Clear apps directory immediately after repo creation
-    # This is CRITICAL - if it fails, the test cannot proceed
-    logger.info("\n🧹 Clearing apps/ directory in new repository...")
+    # Validate topics were actually persisted by fetching repo fresh
+    logger.info("Validating topics were persisted...")
     try:
-        delete_directory_contents(test_repo, "apps", verbose=True)
+        # Fetch repo fresh to ensure topics are really there
+        validated_repo = g.get_repo(test_repo.full_name)
+        actual_topics = validated_repo.get_topics()
+        expected_topic = 'createdby-automated-test-delete-me'
+        
+        if expected_topic not in actual_topics:
+            error_msg = (
+                f"❌ TOPIC VALIDATION FAILED!\n"
+                f"   Repository: {test_repo.full_name}\n"
+                f"   Expected topic: '{expected_topic}'\n"
+                f"   Actual topics: {actual_topics if actual_topics else '(none)'}\n"
+                f"   This repo will NOT be auto-cleaned up!"
+            )
+            logger.error(error_msg)
+            pytest.fail(error_msg)
+        
+        logger.info(f"✓ Topic validated: '{expected_topic}' found on {test_repo.full_name}")
+        logger.info(f"  All topics: {actual_topics}")
+        
+    except GithubException as e:
+        error_msg = f"❌ Failed to validate topics: {e.status} - {e.data.get('message', str(e))}"
+        logger.error(error_msg)
+        pytest.fail(error_msg)
+    
+    # Clone contents from template repo using the specified ref
+    logger.info(f"\n📋 Cloning template repository contents (ref: {clone_ref})...")
+    from tests.helpers.github import clone_repo_contents
+    try:
+        file_count = clone_repo_contents(
+            source_repo=template_repo,
+            dest_repo=test_repo,
+            ref=clone_ref,
+            skip_ci=True
+        )
+        logger.info(f"✓ Cloned {file_count} files from template")
+    except GithubException as e:
+        pytest.fail(f"Failed to clone template repository: {e.status} {e.data.get('message', str(e))}")
+    
+    # Clear apps directory after cloning
+    logger.info("\n🧹 Clearing apps/ directory...")
+    try:
+        delete_directory_contents(test_repo, "apps", skip_ci=True)
         logger.info("✓ Apps folder cleared - ready for test to add apps")
     except GithubException as e:
         if e.status == 403:
@@ -855,42 +903,6 @@ def ephemeral_github_repo(request, deployment_config_template_repo, tenant_githu
         pytest.fail(f"❌ Failed to clear apps folder: {e}")
     
     logger.info("="*70 + "\n")
-    
-    # If target_tag is specified, get the commit SHA from the template repo
-    # We'll use this for reference but won't attempt to update the new repo
-    tag_commit_sha = None
-    if target_tag:
-        try:
-            logger.info(f"Fetching commit SHA for tag '{target_tag}' from template repo")
-            # Get the tag reference from the TEMPLATE repo
-            tag_ref = template_repo.get_git_ref(f"tags/{target_tag}")
-            tag_sha = tag_ref.object.sha
-            
-            # If the tag points to a tag object, get the commit it points to
-            if tag_ref.object.type == "tag":
-                tag_obj = template_repo.get_git_tag(tag_sha)
-                tag_commit_sha = tag_obj.object.sha
-            else:
-                tag_commit_sha = tag_sha
-            
-            logger.info(f"Template tag '{target_tag}' points to commit: {tag_commit_sha}")
-            logger.info(f"Note: New repo uses template's HEAD. Tag commit is for reference only.")
-        except GithubException as e:
-            logger.info(f"⚠ Warning: Could not fetch tag '{target_tag}': {e.status} - {e.data.get('message', str(e))}")
-            logger.info(f"  Continuing with template's HEAD commit")
-    
-    # Give GitHub a moment to propagate deletions and ensure repo is ready
-    logger.info("⏱️  Waiting 2s for GitHub to propagate changes...")
-    time.sleep(2)
-    
-    # Verify repo is actually accessible (refresh to get latest state)
-    try:
-        # Force a fresh API call to verify repo exists and is accessible
-        test_repo_refreshed = g.get_repo(test_repo.full_name)
-        logger.info(f"✓ Repository verified accessible: {test_repo_refreshed.full_name}")
-        test_repo = test_repo_refreshed  # Use the refreshed object
-    except GithubException as e:
-        pytest.fail(f"❌ Repository exists but is not accessible: {e.status} - {e.data.get('message', str(e))}")
     
     # Log repository information for test visibility
     logger.info(f"✓ Repository ready: {test_repo.full_name}")
@@ -903,7 +915,7 @@ def ephemeral_github_repo(request, deployment_config_template_repo, tenant_githu
     logger.info("\n" + "="*70)
     logger.info("TEARDOWN: Deleting test repositories")
     logger.info("="*70)
-    delete_repos_by_topic(dest_owner, 'createdby-automated-test-delete-me', verbose=True)
+    delete_repos_by_topic(dest_owner, 'createdby-automated-test-delete-me')
     logger.info("="*70 + "\n")
 
 
@@ -1024,18 +1036,16 @@ def vault_client(captain_domain, request):
     """
     from tests.helpers.vault import get_vault_client, cleanup_vault_client
     
-    verbose = request.config.option.verbose > 0
     vault_namespace = "glueops-core-vault"
     
     client = get_vault_client(
         captain_domain, 
-        vault_namespace=vault_namespace, 
-        verbose=verbose
+        vault_namespace=vault_namespace
     )
     
     yield client
     
-    cleanup_vault_client(client, verbose=verbose)
+    cleanup_vault_client(client)
 
 
 # =============================================================================
@@ -1334,6 +1344,44 @@ class ColoredTerminalReporter:
                 self.passed.append(item.nodeid)
             elif report.failed:
                 self.failed.append((item.nodeid, report.longreprtext))
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    """
+    Switch DNS service on test retries for letsencrypt tests.
+    Allows testing multiple DNS services as fallbacks.
+    """
+    # Only apply to letsencrypt tests
+    if 'letsencrypt' in item.nodeid:
+        # Get list of DNS services to try
+        dns_services_env = os.getenv('WILDCARD_DNS_SERVICES')
+        if not dns_services_env:
+            pytest.fail("WILDCARD_DNS_SERVICES environment variable is required but not set")
+        dns_services = [s.strip() for s in dns_services_env.split(',')]
+        
+        # execution_count is set by pytest-rerunfailures
+        # First run: execution_count = 1 → use index 0 (first DNS service)
+        # First retry: execution_count = 2 → use index 1 (second DNS service)
+        # Second retry: execution_count = 3 → use index 2 (third DNS service)
+        has_execution_count = hasattr(item, 'execution_count')
+        if has_execution_count:
+            retry_num = item.execution_count - 1  # Convert to 0-based index
+        else:
+            retry_num = 0  # Fallback (shouldn't happen with flaky marker)
+        
+        # Debug: Log the actual execution_count value
+        logger.info(f"DEBUG: has_execution_count={has_execution_count}, execution_count={item.execution_count if has_execution_count else 'N/A'}, retry_num={retry_num}, dns_services={dns_services}")
+        
+        if retry_num < len(dns_services):
+            selected_service = dns_services[retry_num]
+            os.environ['_WILDCARD_DNS_SERVICE_CURRENT'] = selected_service
+            logger.info(f"\n{'='*80}")
+            if retry_num == 0:
+                logger.info(f"🌐 Attempt 1/{len(dns_services)}: Using DNS service '{selected_service}'")
+            else:
+                logger.info(f"🔄 Retry {retry_num}/{len(dns_services)-1}: Switching to DNS service '{selected_service}'")
+            logger.info(f"{'='*80}\n")
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):

@@ -74,7 +74,7 @@ def get_vault_root_token(captain_domain):
     raise ValueError("Root token not found in terraform state")
 
 
-def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault_service="vault", verbose=True):
+def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault_service="vault"):
     """
     Create authenticated Vault client with kubectl port-forward.
     
@@ -82,7 +82,6 @@ def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault
         captain_domain: Domain for locating terraform state
         vault_namespace: Kubernetes namespace (default: glueops-core-vault)
         vault_service: Kubernetes service name (default: vault)
-        verbose: Print detailed progress messages (default: True)
     
     Returns:
         hvac.Client: Authenticated client with _port_forward attached
@@ -94,28 +93,24 @@ def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault
     if hvac is None:
         raise ImportError("hvac library not installed. Run: pip install hvac")
     
-    if verbose:
-        logger.info(f"\n🔐 Connecting to Vault...")
-        logger.info(f"  Namespace: {vault_namespace}")
-        logger.info(f"  Service: {vault_service}")
+    logger.info(f"\n🔐 Connecting to Vault...")
+    logger.info(f"  Namespace: {vault_namespace}")
+    logger.info(f"  Service: {vault_service}")
     
     token = get_vault_root_token(captain_domain)
     
-    if verbose:
-        logger.info(f"  🔌 Establishing port-forward to {vault_namespace}/{vault_service}:8200...")
+    logger.info(f"  🔌 Establishing port-forward to {vault_namespace}/{vault_service}:8200...")
     
     port_forward = PortForward(namespace=vault_namespace, service=vault_service, port=8200)
     port_forward.__enter__()
     vault_addr = f"https://127.0.0.1:{port_forward.local_port}"
     
-    if verbose:
-        logger.info(f"  ✓ Port-forward established on localhost:{port_forward.local_port}")
+    logger.info(f"  ✓ Port-forward established on localhost:{port_forward.local_port}")
     
     if urllib3:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     
-    if verbose:
-        logger.info(f"  🔑 Authenticating with Vault...")
+    logger.info(f"  🔑 Authenticating with Vault...")
     
     client = hvac.Client(url=vault_addr, token=token, verify=False)
     
@@ -123,54 +118,49 @@ def get_vault_client(captain_domain, vault_namespace="glueops-core-vault", vault
         port_forward.__exit__(None, None, None)
         raise Exception("Failed to authenticate with Vault")
     
-    if verbose:
-        logger.info(f"  ✓ Successfully authenticated with Vault\n")
+    logger.info(f"  ✓ Successfully authenticated with Vault\n")
     
     client._port_forward = port_forward
     
     return client
 
 
-def cleanup_vault_client(client, verbose=True):
+def cleanup_vault_client(client):
     """
     Cleanup Vault client and terminate port-forward.
     
     Args:
         client: hvac.Client returned from get_vault_client()
-        verbose: Print cleanup message (default: True)
     """
     if hasattr(client, '_port_forward'):
-        if verbose:
-            logger.info(f"  🔌 Closing port-forward...")
+        logger.info(f"  🔌 Closing port-forward...")
         client._port_forward.__exit__(None, None, None)
-        if verbose:
-            logger.info(f"  ✓ Port-forward closed\n")
+        logger.info(f"  ✓ Port-forward closed\n")
 
 
 @contextmanager
-def vault_client_context(captain_domain, vault_namespace="glueops-core-vault", verbose=True):
+def vault_client_context(captain_domain, vault_namespace="glueops-core-vault"):
     """
     Context manager for Vault client with automatic cleanup.
     
     Usage:
-        with vault_client_context(captain_domain, verbose=True) as client:
+        with vault_client_context(captain_domain) as client:
             create_vault_secret(client, "path", {"key": "value"})
     
     Args:
         captain_domain: Domain name
         vault_namespace: Vault namespace (default: "glueops-core-vault")
-        verbose: Print status messages (default: True)
     
     Yields:
         hvac.Client: Authenticated Vault client
     """
     client = None
     try:
-        client = get_vault_client(captain_domain, vault_namespace, verbose=verbose)
+        client = get_vault_client(captain_domain, vault_namespace)
         yield client
     finally:
         if client:
-            cleanup_vault_client(client, verbose)
+            cleanup_vault_client(client)
 
 
 def create_vault_secret(client, path, data, mount_point='secret'):
@@ -228,7 +218,7 @@ def delete_vault_secret(client, path, mount_point='secret'):
     )
 
 
-def create_multiple_vault_secrets(client, secret_configs, mount_point='secret', verbose=False):
+def create_multiple_vault_secrets(client, secret_configs, mount_point='secret'):
     """
     Create multiple secrets in Vault with error tracking.
     
@@ -236,7 +226,6 @@ def create_multiple_vault_secrets(client, secret_configs, mount_point='secret', 
         client: Authenticated hvac.Client
         secret_configs: List of dicts with 'path' and 'data' keys
         mount_point: KV mount point (default: "secret")
-        verbose: Print progress messages (default: False)
     
     Returns:
         tuple: (created_paths, failures)
@@ -245,8 +234,7 @@ def create_multiple_vault_secrets(client, secret_configs, mount_point='secret', 
     failures = []
     total = len(secret_configs)
     
-    if verbose:
-        logger.info(f"  📝 Creating {total} secrets...")
+    logger.info(f"  📝 Creating {total} secrets...")
     
     for idx, config in enumerate(secret_configs, 1):
         path = config['path']
@@ -256,26 +244,24 @@ def create_multiple_vault_secrets(client, secret_configs, mount_point='secret', 
             create_vault_secret(client, path, data, mount_point)
             created_paths.append(path)
             
-            if verbose and idx % 10 == 0:
+            if idx % 10 == 0:
                 percentage = (idx / total) * 100
                 logger.info(f"     [{idx}/{total}] {percentage:.0f}% complete...")
                 
         except Exception as e:
             error_msg = f"{path}: {str(e)}"
             failures.append(error_msg)
-            if verbose:
-                logger.info(f"     ✗ Failed: {error_msg}")
+            logger.info(f"     ✗ Failed: {error_msg}")
     
-    if verbose:
-        success_count = len(created_paths)
-        logger.info(f"  ✓ Created {success_count}/{total} secrets successfully")
-        if failures:
-            logger.info(f"  ✗ Failed to create {len(failures)} secrets")
+    success_count = len(created_paths)
+    logger.info(f"  ✓ Created {success_count}/{total} secrets successfully")
+    if failures:
+        logger.info(f"  ✗ Failed to create {len(failures)} secrets")
     
     return created_paths, failures
 
 
-def delete_multiple_vault_secrets(client, paths, mount_point='secret', verbose=False):
+def delete_multiple_vault_secrets(client, paths, mount_point='secret'):
     """
     Delete multiple secrets from Vault with error tracking.
     
@@ -283,7 +269,6 @@ def delete_multiple_vault_secrets(client, paths, mount_point='secret', verbose=F
         client: Authenticated hvac.Client
         paths: List of secret paths to delete
         mount_point: KV mount point (default: "secret")
-        verbose: Print progress messages (default: False)
     
     Returns:
         tuple: (deleted_paths, failures)
@@ -292,35 +277,32 @@ def delete_multiple_vault_secrets(client, paths, mount_point='secret', verbose=F
     failures = []
     total = len(paths)
     
-    if verbose:
-        logger.info(f"  🧹 Deleting {total} secrets...")
+    logger.info(f"  🧹 Deleting {total} secrets...")
     
     for idx, path in enumerate(paths, 1):
         try:
             delete_vault_secret(client, path, mount_point)
             deleted_paths.append(path)
             
-            if verbose and idx % 10 == 0:
+            if idx % 10 == 0:
                 percentage = (idx / total) * 100
                 logger.info(f"     [{idx}/{total}] {percentage:.0f}% complete...")
                 
         except Exception as e:
             error_msg = f"{path}: {str(e)}"
             failures.append(error_msg)
-            if verbose:
-                logger.info(f"     ✗ Failed: {error_msg}")
+            logger.info(f"     ✗ Failed: {error_msg}")
     
-    if verbose:
-        success_count = len(deleted_paths)
-        if failures:
-            logger.info(f"  ⚠️  Deleted {success_count}/{total} secrets ({len(failures)} failed)")
-        else:
-            logger.info(f"  ✓ Successfully deleted {success_count} secrets")
+    success_count = len(deleted_paths)
+    if failures:
+        logger.info(f"  ⚠️  Deleted {success_count}/{total} secrets ({len(failures)} failed)")
+    else:
+        logger.info(f"  ✓ Successfully deleted {success_count} secrets")
     
     return deleted_paths, failures
 
 
-def verify_vault_secrets(client, paths, mount_point='secret', sample_size=None, verbose=False):
+def verify_vault_secrets(client, paths, mount_point='secret', sample_size=None):
     """
     Verify that secrets exist and are readable.
     
@@ -329,7 +311,6 @@ def verify_vault_secrets(client, paths, mount_point='secret', sample_size=None, 
         paths: List of secret paths to verify
         mount_point: KV mount point (default: "secret")
         sample_size: If provided, only verify a random sample
-        verbose: Print progress messages (default: False)
     
     Returns:
         list: List of error messages for failed verifications
@@ -339,11 +320,9 @@ def verify_vault_secrets(client, paths, mount_point='secret', sample_size=None, 
     
     if sample_size and sample_size < len(paths):
         paths_to_check = random.sample(paths, sample_size)
-        if verbose:
-            logger.info(f"  🔍 Verifying random sample of {sample_size}/{len(paths)} secrets...")
+        logger.info(f"  🔍 Verifying random sample of {sample_size}/{len(paths)} secrets...")
     else:
-        if verbose:
-            logger.info(f"  🔍 Verifying {len(paths)} secrets...")
+        logger.info(f"  🔍 Verifying {len(paths)} secrets...")
     
     for idx, path in enumerate(paths_to_check, 1):
         try:
@@ -351,20 +330,17 @@ def verify_vault_secrets(client, paths, mount_point='secret', sample_size=None, 
             if not secret.get('data', {}).get('data'):
                 error_msg = f"{path}: empty data"
                 failures.append(error_msg)
-                if verbose:
-                    logger.info(f"     ✗ {error_msg}")
-            elif verbose and idx % 5 == 0:
+                logger.info(f"     ✗ {error_msg}")
+            elif idx % 5 == 0:
                 logger.info(f"     [{idx}/{len(paths_to_check)}] verified...")
         except Exception as e:
             error_msg = f"{path}: {str(e)}"
             failures.append(error_msg)
-            if verbose:
-                logger.info(f"     ✗ {error_msg}")
+            logger.info(f"     ✗ {error_msg}")
     
-    if verbose:
-        success_count = len(paths_to_check) - len(failures)
-        logger.info(f"  ✓ Verified {success_count}/{len(paths_to_check)} secrets successfully")
-        if failures:
-            logger.info(f"  ✗ Failed to verify {len(failures)} secrets")
+    success_count = len(paths_to_check) - len(failures)
+    logger.info(f"  ✓ Verified {success_count}/{len(paths_to_check)} secrets successfully")
+    if failures:
+        logger.info(f"  ✗ Failed to verify {len(failures)} secrets")
     
     return failures

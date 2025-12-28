@@ -76,9 +76,9 @@ Low-level validation functions that return lists of problems. Never fail tests d
 
 ```python
 # Validation functions (return problems list)
-problems = validate_pod_health(core_v1, platform_namespaces, verbose=True)
+problems = validate_pod_health(core_v1, platform_namespaces)
 problems, total = validate_ingress_configuration(networking_v1, platform_namespaces)
-problems = validate_all_argocd_apps(custom_api, namespace_filter=None, verbose=True)
+problems = validate_all_argocd_apps(custom_api, namespace_filter=None)
 
 # Utility functions
 lb_ip = get_ingress_load_balancer_ip(networking_v1, 'public', fail_on_none=True)
@@ -91,9 +91,9 @@ High-level wrappers that call validators and fail tests on errors using `pytest.
 
 ```python
 # Call these in tests - they handle logging and pytest.fail() internally
-assert_argocd_healthy(custom_api, namespace_filter=None, verbose=True)
-assert_pods_healthy(core_v1, platform_namespaces, verbose=True)
-assert_ingress_valid(networking_v1, platform_namespaces, verbose=True)
+assert_argocd_healthy(custom_api, namespace_filter=None)
+assert_pods_healthy(core_v1, platform_namespaces)
+assert_ingress_valid(networking_v1, platform_namespaces)
 assert_certificates_ready(custom_api, cert_info_list, namespace='nonprod')
 assert_tls_secrets_valid(core_v1, secret_info_list, namespace='nonprod')
 assert_https_endpoints_valid(endpoint_info_list, validate_cert=True)
@@ -193,7 +193,7 @@ def test_something(core_v1, platform_namespaces):
     
     Cluster Impact: READ-ONLY (queries only)
     """
-    problems = validate_pod_health(core_v1, platform_namespaces, verbose=True)
+    problems = validate_pod_health(core_v1, platform_namespaces)
     
     if problems:
         pytest.fail(f"{len(problems)} issue(s) found:\n" + "\n".join(problems))
@@ -211,8 +211,8 @@ def test_something_simple(core_v1, custom_api, platform_namespaces):
     Cluster Impact: READ-ONLY
     """
     # These call validators internally and pytest.fail() on errors
-    assert_argocd_healthy(custom_api, verbose=True)
-    assert_pods_healthy(core_v1, platform_namespaces, verbose=True)
+    assert_argocd_healthy(custom_api)
+    assert_pods_healthy(core_v1, platform_namespaces)
 ```
 
 ### GitOps Integration Test
@@ -247,10 +247,10 @@ def test_gitops_workflow(ephemeral_github_repo, custom_api, core_v1, captain_dom
     
     # Step 3+: Validate using assertion functions
     print_section_header("STEP 3: Checking ArgoCD Status")
-    assert_argocd_healthy(custom_api, verbose=True)
+    assert_argocd_healthy(custom_api)
     
     print_section_header("STEP 4: Checking Pod Health")
-    assert_pods_healthy(core_v1, platform_namespaces, verbose=True)
+    assert_pods_healthy(core_v1, platform_namespaces)
 ```
 
 ### UI Test with Browser Automation
@@ -504,7 +504,7 @@ The `PortForward` context manager handles this automatically.
    - Use validators (`tests.helpers.k8s`) when you need fine-grained control
    - Use assertions (`tests.helpers.assertions`) for simpler tests
 3. **All assertion functions handle their own logging** - No duplicate logs in tests
-4. **Use `verbose=True` parameter** - Functions log details when verbose
+4. **All helper functions log unconditionally** - No verbose parameters; functions always log their operations and results for debugging
 5. **Docstrings document what, why, and cluster impact** - Every test has comprehensive docstring
 6. **Section headers for multi-step tests** - Use `print_section_header("STEP N: Description")`
 7. **Fixture handles setup** - `ephemeral_github_repo` clears apps/ automatically
@@ -591,15 +591,17 @@ Uses `dnspython` to validate ingress hosts:
 3. Waits for completion
 4. Validates job success
 
-### 5. Verbose Logging
+### 5. Unconditional Logging
 
-All validation functions support `verbose=True` parameter for detailed logging:
+All helper functions log their operations unconditionally for debugging:
 ```python
-problems = validate_pod_health(core_v1, namespaces, verbose=True)
-# Logs:
+problems = validate_pod_health(core_v1, namespaces)
+# Always logs:
 #   Checking pod health across platform namespaces...
 #   ✓ All 120 pods healthy
 ```
+
+**Note:** The `verbose` parameter was removed in December 2025 - all functions now always log.
 
 ### 6. Progress Bars
 

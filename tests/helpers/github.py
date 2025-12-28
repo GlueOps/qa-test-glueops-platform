@@ -12,6 +12,100 @@ from github.GithubException import UnknownObjectException
 
 logger = logging.getLogger(__name__)
 
+# Polling configuration constants (10 minutes timeout, 15 second intervals)
+DEFAULT_POLL_INTERVAL = 15
+DEFAULT_TIMEOUT = 600
+
+
+def clone_repo_contents(source_repo, dest_repo, ref, skip_ci=True):
+    """
+    Clone all contents from source repository to destination repository.
+    
+    This is a generic utility that copies the entire file structure from one
+    GitHub repository to another. Useful for creating test repositories from
+    template repositories without using GitHub's template API.
+    
+    Args:
+        source_repo: GitHub Repository object (source)
+        dest_repo: GitHub Repository object (destination, should be empty or just initialized)
+        ref: Git reference to copy from (branch name, tag, or commit SHA - e.g., 'main', 'v1.0.0', 'abc123')
+        skip_ci: Whether to add [skip ci] to commit messages (default: True)
+        
+    Returns:
+        int: Number of files copied
+        
+    Example:
+        # Clone from a specific tag with CI skipped
+        count = clone_repo_contents(template_repo, new_repo, ref='v1.0.0')
+        
+        # Clone without skipping CI
+        count = clone_repo_contents(template_repo, new_repo, ref='main', skip_ci=False)
+    """
+    copied_count = 0
+    ci_suffix = " [skip ci]" if skip_ci else ""
+    
+    def copy_contents_recursive(path=""):
+        """Recursively copy all files and directories."""
+        nonlocal copied_count
+        
+        try:
+            contents = source_repo.get_contents(path, ref=ref)
+            
+            if not isinstance(contents, list):
+                contents = [contents]
+            
+            for item in contents:
+                if item.type == "dir":
+                    logger.info(f"  📁 {item.path}/")
+                    # Recurse into directory
+                    copy_contents_recursive(item.path)
+                else:
+                    # Copy file
+                    logger.info(f"  📄 {item.path}")
+                    
+                    try:
+                        # Get file content from source
+                        file_content = item.decoded_content
+                        
+                        # Create file in destination (always on default branch)
+                        dest_repo.create_file(
+                            path=item.path,
+                            message=f"Clone: {item.path}{ci_suffix}",
+                            content=file_content
+                        )
+                        copied_count += 1
+                        
+                    except GithubException as e:
+                        if e.status == 422:
+                            # File already exists - update it instead
+                            logger.info(f"    ⚠ Updating existing {item.path}")
+                            existing_file = dest_repo.get_contents(item.path)
+                            dest_repo.update_file(
+                                path=item.path,
+                                message=f"Clone: Update {item.path}{ci_suffix}",
+                                content=file_content,
+                                sha=existing_file.sha
+                            )
+                            copied_count += 1
+                        else:
+                            raise
+                            
+        except GithubException as e:
+            if e.status == 404:
+                pass  # Path doesn't exist, skip
+            else:
+                raise
+    
+    logger.info(f"Cloning contents from {source_repo.full_name} (ref: {ref}) to {dest_repo.full_name}...")
+    if skip_ci:
+        logger.info("  CI/CD workflows will be skipped for all commits")
+    
+    copy_contents_recursive()
+    
+    logger.info(f"✓ Cloned {copied_count} file(s)")
+    
+    return copied_count
+
 
 def get_github_client(token: str) -> Github:
     """
@@ -28,7 +122,7 @@ def get_github_client(token: str) -> Github:
     return Github(auth=auth)
 
 
-def create_repo(org, repo_name: str, description: str = "Test repository", private: bool = False, verbose: bool = True):
+def create_repo(org, repo_name: str, description: str = "Test repository", private: bool = False):
     """
     Create a new GitHub repository in an organization.
     
@@ -37,13 +131,11 @@ def create_repo(org, repo_name: str, description: str = "Test repository", priva
         repo_name: Name for the new repository
         description: Repository description
         private: Whether the repo should be private (default: False)
-        verbose: Whether to log creation details
         
     Returns:
         github.Repository.Repository: The created repository
     """
-    if verbose:
-        logger.info(f"Creating repository: {repo_name} (private={private})")
+    logger.info(f"Creating repository: {repo_name} (private={private})")
     
     new_repo = org.create_repo(
         name=repo_name,
@@ -54,118 +146,111 @@ def create_repo(org, repo_name: str, description: str = "Test repository", priva
     
     time.sleep(2)
     
-    if verbose:
-        logger.info(f"✓ Repository created: {new_repo.html_url}")
+    logger.info(f"✓ Repository created: {new_repo.html_url}")
     
     return new_repo
 
 
-def delete_repo(repo, verbose: bool = True):
+def delete_repo(repo):
     """
     Delete a GitHub repository.
     
     Args:
         repo: GitHub Repository object to delete
-        verbose: Whether to log deletion details
     """
     repo_name = repo.full_name
-    if verbose:
-        logger.info(f"Deleting repository: {repo_name}")
+    logger.info(f"Deleting repository: {repo_name}")
     
     repo.delete()
     
-    if verbose:
-        logger.info(f"✓ Repository deleted: {repo_name}")
+    logger.info(f"✓ Repository deleted: {repo_name}")
 
 
-def delete_repo_if_exists(org, repo_name: str, verbose: bool = True) -> bool:
+def delete_repo_if_exists(org, repo_name: str) -> bool:
     """
     Delete a repository if it exists (for cleanup before/after tests).
     
     Args:
         org: GitHub Organization object
         repo_name: Name of the repository to delete
-        verbose: Whether to log details
         
     Returns:
         bool: True if repo was deleted, False if it didn't exist
     """
     try:
         existing_repo = org.get_repo(repo_name)
-        if verbose:
-            logger.info(f"Found existing repository: {repo_name} - deleting...")
+        logger.info(f"Found existing repository: {repo_name} - deleting...")
         existing_repo.delete()
         time.sleep(2)
-        if verbose:
-            logger.info(f"✓ Repository deleted: {repo_name}")
+        logger.info(f"✓ Repository deleted: {repo_name}")
         return True
     except UnknownObjectException:
-        if verbose:
-            logger.info(f"Repository {repo_name} does not exist (nothing to delete)")
+        logger.info(f"Repository {repo_name} does not exist (nothing to delete)")
         return False
     except GithubException as e:
         if e.status == 404:
-            if verbose:
-                logger.info(f"Repository {repo_name} does not exist (nothing to delete)")
+            logger.info(f"Repository {repo_name} does not exist (nothing to delete)")
             return False
         raise
 
 
-def delete_repos_by_topic(org, topic: str, verbose: bool = True, min_age_seconds: int = 120) -> int:
+def delete_repos_by_topic(org, topic: str) -> int:
     """
     Delete all repositories in an organization that have a specific topic.
     
-    This is used for cleanup of automated test repositories. Only deletes repositories
-    older than min_age_seconds to avoid race conditions with newly created test repos
-    whose topics haven't propagated to GitHub's search index yet.
+    This is used for cleanup of automated test repositories. Each deletion
+    is validated to ensure the repository was successfully removed.
     
     Args:
         org: GitHub Organization or User object
         topic: Topic to search for (e.g., 'createdby-automated-test-delete-me')
-        verbose: Whether to log details
-        min_age_seconds: Minimum age in seconds before a repo can be deleted (default: 120)
         
     Returns:
         int: Number of repositories deleted
     """
-    import datetime
     deleted_count = 0
-    skipped_count = 0
     
-    if verbose:
-        logger.info(f"Searching for repositories with topic '{topic}'...")
+    logger.info(f"Searching for repositories with topic '{topic}'...")
     
     try:
         repos = org.get_repos()
-        current_time = datetime.datetime.now(datetime.timezone.utc)
         
         for repo in repos:
             if topic in repo.get_topics():
-                # Check repo age to avoid deleting newly created repos
-                repo_age = (current_time - repo.created_at).total_seconds()
+                repo_name = repo.name
+                repo_full_name = repo.full_name
                 
-                if repo_age < min_age_seconds:
-                    if verbose:
-                        logger.info(f"  Found test repo: {repo.name} - skipping (too new: {int(repo_age)}s old)")
-                    skipped_count += 1
-                    continue
+                logger.info(f"  Found test repo: {repo_name} - deleting...")
                 
-                if verbose:
-                    logger.info(f"  Found test repo: {repo.name} - deleting (age: {int(repo_age)}s)...")
                 try:
                     repo.delete()
-                    deleted_count += 1
                     time.sleep(1)
+                    
+                    # Validate deletion
+                    try:
+                        org.get_repo(repo_name)
+                        # If we get here, repo still exists - deletion failed
+                        raise RuntimeError(f"Deletion validation failed: {repo_name} still exists after delete() call")
+                    except (UnknownObjectException, GithubException) as e:
+                        if hasattr(e, 'status') and e.status == 404:
+                            # 404 means repo is gone - success!
+                            deleted_count += 1
+                            logger.info(f"  ✓ Confirmed deleted: {repo_name}")
+                        elif isinstance(e, UnknownObjectException):
+                            # UnknownObjectException also means it's gone
+                            deleted_count += 1
+                            logger.info(f"  ✓ Confirmed deleted: {repo_name}")
+                        else:
+                            # Some other error during validation
+                            raise RuntimeError(f"Could not validate deletion of {repo_name}: {e}")
+                            
                 except GithubException as e:
-                    logger.warning(f"  ⚠ Failed to delete {repo.name}: {e.status}")
+                    raise RuntimeError(f"Failed to delete {repo_name}: {e.status} - {e.data.get('message', str(e))}")
         
-        if verbose:
-            if deleted_count > 0:
-                logger.info(f"✓ Deleted {deleted_count} test repository/repositories")
-            if skipped_count > 0:
-                logger.info(f"  (Skipped {skipped_count} repo(s) created within last {min_age_seconds}s)")
-            if deleted_count == 0 and skipped_count == 0:
-                logger.info(f"✓ No test repositories found with topic '{topic}'")
+        if deleted_count > 0:
+            logger.info(f"✓ Deleted {deleted_count} test repository/repositories")
+        else:
+            logger.info(f"✓ No test repositories found with topic '{topic}'")
         
         return deleted_count
         
@@ -174,20 +259,19 @@ def delete_repos_by_topic(org, topic: str, verbose: bool = True, min_age_seconds
         return deleted_count
 
 
-def set_repo_topics(repo, topics: list, verbose: bool = True):
+def set_repo_topics(github_client, repo, topics: list):
     """
     Set topics on a GitHub repository and verify they are set.
     
     Args:
+        github_client: GitHub client object (used to fetch fresh repo)
         repo: GitHub Repository object
         topics: List of topic strings to set
-        verbose: Whether to log details
         
     Raises:
-        RuntimeError: If topics cannot be verified after setting
+        RuntimeError: If topics cannot be verified after setting or search index timeout
     """
-    if verbose:
-        logger.info(f"Setting topics: {', '.join(topics)}")
+    logger.info(f"Setting topics on {repo.full_name}: {', '.join(topics)}")
     
     repo.replace_topics(topics)
     time.sleep(2)
@@ -199,18 +283,45 @@ def set_repo_topics(repo, topics: list, verbose: bool = True):
             f"Topic verification failed! Expected: {sorted(topics)}, Got: {sorted(actual_topics)}"
         )
     
-    if verbose:
-        logger.info(f"✓ Topics verified: {', '.join(actual_topics)}")
+    logger.info(f"✓ Topics verified: {', '.join(actual_topics)}")
     
-    # CRITICAL: Wait for GitHub's search index to update
-    # Without this delay, orphan cleanup from other tests may not find this repo's topics
+    # CRITICAL: Poll GitHub's search index to verify topics are searchable
+    # Without this verification, orphan cleanup from other tests may not find this repo's topics
     # and could incorrectly skip deleting it, or conversely, delete it prematurely
-    if verbose:
-        logger.info("⏱️  Waiting 5s for GitHub topic search index to update...")
-    time.sleep(5)
+    logger.info(f"⏱️  Polling for GitHub topic search index to update (timeout: {DEFAULT_TIMEOUT}s)...")
+    logger.info(f"   Repository: {repo.full_name}")
+    
+    start_time = time.time()
+    poll_count = 0
+    
+    while time.time() - start_time < DEFAULT_TIMEOUT:
+        poll_count += 1
+        
+        try:
+            # Fetch repo completely fresh using the GitHub client to verify topics are searchable
+            fresh_repo = github_client.get_repo(repo.full_name)
+            fresh_topics = fresh_repo.get_topics()
+            
+            if set(topics) == set(fresh_topics):
+                elapsed = time.time() - start_time
+                logger.info(f"✓ Topics searchable in GitHub index after {elapsed:.1f}s ({poll_count} poll(s))")
+                return
+            else:
+                logger.info(f"Poll {poll_count}: Topics not yet in search index. Expected: {sorted(topics)}, Got: {sorted(fresh_topics)}")
+        except Exception as e:
+            logger.info(f"Poll {poll_count}: Error checking topics: {e}")
+        
+        time.sleep(DEFAULT_POLL_INTERVAL)
+    
+    # Timeout reached
+    elapsed = time.time() - start_time
+    raise RuntimeError(
+        f"Topic search index verification timeout after {elapsed:.1f}s ({poll_count} poll(s)). "
+        f"Topics may not be searchable for orphan cleanup. Expected: {sorted(topics)}"
+    )
 
 
-def create_branch(repo, branch_name: str, source_branch: str = "main", verbose: bool = True):
+def create_branch(repo, branch_name: str, source_branch: str = "main"):
     """
     Create a new branch from a source branch.
     
@@ -218,13 +329,11 @@ def create_branch(repo, branch_name: str, source_branch: str = "main", verbose: 
         repo: GitHub Repository object
         branch_name: Name of the new branch
         source_branch: Source branch to create from (default: main)
-        verbose: Whether to log creation details
         
     Returns:
         github.GitRef.GitRef: The created branch reference
     """
-    if verbose:
-        logger.info(f"Creating branch: {branch_name} from {source_branch}")
+    logger.info(f"Creating branch: {branch_name} from {source_branch}")
     
     source_ref = repo.get_branch(source_branch)
     source_sha = source_ref.commit.sha
@@ -234,13 +343,12 @@ def create_branch(repo, branch_name: str, source_branch: str = "main", verbose: 
         sha=source_sha
     )
     
-    if verbose:
-        logger.info(f"✓ Branch created: {branch_name}")
+    logger.info(f"✓ Branch created: {branch_name}")
     
     return new_ref
 
 
-def create_dummy_commit(repo, branch_name: str, file_path: str, content: str, commit_message: str, verbose: bool = True):
+def create_dummy_commit(repo, branch_name: str, file_path: str, content: str, commit_message: str, skip_ci=True):
     """
     Create a file with a commit on a specific branch.
     
@@ -250,28 +358,30 @@ def create_dummy_commit(repo, branch_name: str, file_path: str, content: str, co
         file_path: Path for the new file
         content: File content
         commit_message: Commit message
-        verbose: Whether to log details
+        skip_ci: Whether to add [skip ci] to commit message (default: True)
         
     Returns:
         dict: Result from create_file with commit info
     """
-    if verbose:
-        logger.info(f"Creating commit on branch {branch_name}: {commit_message}")
+    ci_suffix = " [skip ci]" if skip_ci else ""
+    logger.info(f"Creating commit on branch {branch_name}: {commit_message}")
     
     result = repo.create_file(
         path=file_path,
-        message=commit_message,
+        message=f"{commit_message}{ci_suffix}",
         content=content,
         branch=branch_name
     )
     
-    if verbose:
-        logger.info(f"✓ Commit created: {result['commit'].sha[:8]}")
+    commit_sha = result['commit'].sha
+    logger.info(f"✓ Commit created")
+    logger.info(f"  Full SHA: {commit_sha}")
+    logger.info(f"  Short SHA: {commit_sha[:8]}")
     
     return result
 
 
-def create_pull_request(repo, title: str, body: str, head_branch: str, base_branch: str = "main", verbose: bool = True):
+def create_pull_request(repo, title: str, body: str, head_branch: str, base_branch: str = "main"):
     """
     Create a pull request.
     
@@ -281,7 +391,6 @@ def create_pull_request(repo, title: str, body: str, head_branch: str, base_bran
         body: PR description/body
         head_branch: Branch with changes (source)
         base_branch: Branch to merge into (target, default: main)
-        verbose: Whether to log details
         
     Returns:
         github.PullRequest.PullRequest: The created PR
@@ -289,8 +398,7 @@ def create_pull_request(repo, title: str, body: str, head_branch: str, base_bran
     Raises:
         GithubException: If PR creation fails
     """
-    if verbose:
-        logger.info(f"Creating PR: {title} ({head_branch} -> {base_branch})")
+    logger.info(f"Creating PR: {title} ({head_branch} -> {base_branch})")
     
     try:
         pr = repo.create_pull(
@@ -300,8 +408,7 @@ def create_pull_request(repo, title: str, body: str, head_branch: str, base_bran
             base=base_branch
         )
         
-        if verbose:
-            logger.info(f"✓ PR created: #{pr.number} - {pr.html_url}")
+        logger.info(f"✓ PR created: #{pr.number} - {pr.html_url}")
         
         return pr
         
@@ -321,24 +428,21 @@ def create_pull_request(repo, title: str, body: str, head_branch: str, base_bran
         raise
 
 
-def close_pull_request(pr, verbose: bool = True):
+def close_pull_request(pr):
     """
     Close a pull request without merging.
     
     Args:
         pr: GitHub PullRequest object
-        verbose: Whether to log details
     """
-    if verbose:
-        logger.info(f"Closing PR: #{pr.number}")
+    logger.info(f"Closing PR: #{pr.number}")
     
     pr.edit(state="closed")
     
-    if verbose:
-        logger.info(f"✓ PR closed: #{pr.number}")
+    logger.info(f"✓ PR closed: #{pr.number}")
 
 
-def merge_pull_request(pr, merge_method: str = "merge", commit_message: Optional[str] = None, verbose: bool = True):
+def merge_pull_request(pr, merge_method: str = "merge", commit_message: Optional[str] = None):
     """
     Merge a pull request.
     
@@ -346,13 +450,11 @@ def merge_pull_request(pr, merge_method: str = "merge", commit_message: Optional
         pr: GitHub PullRequest object
         merge_method: Merge method - 'merge', 'squash', or 'rebase'
         commit_message: Optional custom commit message
-        verbose: Whether to log details
         
     Returns:
         github.PullRequestMergeStatus.PullRequestMergeStatus: Merge result
     """
-    if verbose:
-        logger.info(f"Merging PR: #{pr.number} (method: {merge_method})")
+    logger.info(f"Merging PR: #{pr.number} (method: {merge_method})")
     
     merge_kwargs = {"merge_method": merge_method}
     if commit_message is not None:
@@ -360,13 +462,12 @@ def merge_pull_request(pr, merge_method: str = "merge", commit_message: Optional
     
     result = pr.merge(**merge_kwargs)
     
-    if verbose:
-        logger.info(f"✓ PR merged: #{pr.number}")
+    logger.info(f"✓ PR merged: #{pr.number}")
     
     return result
 
 
-def create_github_file(repo, file_path, content, commit_message, verbose=True, log_content=False):
+def create_github_file(repo, file_path, content, commit_message, skip_ci=True):
     """
     Create a file in a GitHub repository with logging and retry logic for 404 errors.
     
@@ -375,8 +476,7 @@ def create_github_file(repo, file_path, content, commit_message, verbose=True, l
         file_path: Path to the file
         content: File content as string
         commit_message: Git commit message
-        verbose: Whether to log creation details (default: True)
-        log_content: Whether to log the full file content (default: False)
+        skip_ci: Whether to add [skip ci] to commit message (default: True)
     
     Returns:
         GitHub ContentFile object
@@ -384,16 +484,14 @@ def create_github_file(repo, file_path, content, commit_message, verbose=True, l
     Raises:
         GithubException: If creation fails after retries
     """
-    if verbose:
-        logger.info(f"      File: {file_path}")
-        logger.info(f"      Message: {commit_message}")
-        
-        if log_content:
-            logger.info(f"      Content:")
-            logger.info("      " + "="*60)
-            for line in content.split('\n'):
-                logger.info(f"      {line}")
-            logger.info("      " + "="*60)
+    ci_suffix = " [skip ci]" if skip_ci else ""
+    logger.info(f"      File: {file_path}")
+    logger.info(f"      Message: {commit_message}")
+    logger.info(f"      Content:")
+    logger.info("      " + "="*60)
+    for line in content.split('\n'):
+        logger.info(f"      {line}")
+    logger.info("      " + "="*60)
     
     # Retry logic for 404 errors (GitHub propagation delays)
     max_retries = 3
@@ -403,36 +501,55 @@ def create_github_file(repo, file_path, content, commit_message, verbose=True, l
         try:
             result = repo.create_file(
                 path=file_path,
-                message=commit_message,
+                message=f"{commit_message}{ci_suffix}",
                 content=content
             )
             
-            if verbose:
-                logger.info(f"      ✓ Committed to repository")
+            commit_sha = result['commit'].sha
+            logger.info(f"      ✓ Committed to repository")
+            logger.info(f"      Full SHA: {commit_sha}")
+            logger.info(f"      Short SHA: {commit_sha[:8]}")
             
             return result
             
         except GithubException as e:
             if e.status == 404 and attempt < max_retries - 1:
-                if verbose:
-                    logger.info(f"      ⚠ Got 404, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
+                logger.info(f"      ⚠ Got 404, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
                 time.sleep(retry_delay)
                 continue
+            elif e.status == 422:
+                # File exists, update instead
+                logger.info(f"      File exists, updating instead...")
+                existing_file = repo.get_contents(file_path)
+                result = repo.update_file(
+                    path=file_path,
+                    message=f"{commit_message}{ci_suffix}",
+                    content=content,
+                    sha=existing_file.sha
+                )
+                
+                commit_sha = result['commit'].sha
+                logger.info(f"      ✓ File updated")
+                logger.info(f"      Full SHA: {commit_sha}")
+                logger.info(f"      Short SHA: {commit_sha[:8]}")
+                
+                return result
             else:
-                # Re-raise if not a 404 or if we've exhausted retries
+                # Re-raise if not a 404/422 or if we've exhausted retries
                 raise
 
 
-def delete_directory_contents(repo, path, verbose=True, max_retries=3):
+def delete_directory_contents(repo, path, max_retries=3, skip_ci=True):
     """
     Recursively delete all contents of a directory in a GitHub repository.
     
     Args:
         repo: GitHub Repository object
         path: Path to the directory to delete
-        verbose: Whether to log deletion details (default: True)
         max_retries: Number of retries for 409 conflicts (default: 3)
+        skip_ci: Whether to add [skip ci] to commit messages (default: True)
     """
+    ci_suffix = " [skip ci]" if skip_ci else ""
     try:
         contents = repo.get_contents(path)
         
@@ -441,12 +558,10 @@ def delete_directory_contents(repo, path, verbose=True, max_retries=3):
         
         for item in contents:
             if item.type == "dir":
-                if verbose:
-                    logger.info(f"  Deleting directory: {item.path}")
-                delete_directory_contents(repo, item.path, verbose, max_retries)
+                logger.info(f"  Deleting directory: {item.path}")
+                delete_directory_contents(repo, item.path, max_retries, skip_ci)
             else:
-                if verbose:
-                    logger.info(f"  Deleting file: {item.path}")
+                logger.info(f"  Deleting file: {item.path}")
                 
                 # Retry logic for 409 conflicts (file SHA changed)
                 for attempt in range(max_retries):
@@ -455,14 +570,13 @@ def delete_directory_contents(repo, path, verbose=True, max_retries=3):
                         current_file = repo.get_contents(item.path)
                         repo.delete_file(
                             path=item.path,
-                            message=f"Clear directory: remove {item.path}",
+                            message=f"Clear directory: remove {item.path}{ci_suffix}",
                             sha=current_file.sha
                         )
                         break  # Success
                     except GithubException as e:
                         if e.status == 409 and attempt < max_retries - 1:
-                            if verbose:
-                                logger.info(f"    Retry {attempt + 1}/{max_retries - 1}: SHA conflict, refetching...")
+                            logger.info(f"    Retry {attempt + 1}/{max_retries - 1}: SHA conflict, refetching...")
                             time.sleep(1)
                             continue
                         else:
@@ -474,19 +588,19 @@ def delete_directory_contents(repo, path, verbose=True, max_retries=3):
             raise
 
 
-def clear_apps_directory(repo, verbose=True):
+def clear_apps_directory(repo, skip_ci=True):
     """
     Clear all contents from the apps/ directory in a GitHub repository.
     
     Args:
         repo: GitHub Repository object
-        verbose: Whether to log operations (default: True)
+        skip_ci: Whether to add [skip ci] to commit messages (default: True)
     
     Returns:
         int: Number of items deleted
     """
-    if verbose:
-        logger.info("Clearing apps/ directory...")
+    ci_suffix = " [skip ci]" if skip_ci else ""
+    logger.info("Clearing apps/ directory...")
     
     try:
         apps_contents = repo.get_contents("apps")
@@ -495,44 +609,38 @@ def clear_apps_directory(repo, verbose=True):
             apps_contents = [apps_contents]
         
         items_count = len(apps_contents)
-        if verbose:
-            logger.info(f"Found {items_count} items in apps/ directory")
+        logger.info(f"Found {items_count} items in apps/ directory")
         
         for item in apps_contents:
             if item.type == "dir":
-                if verbose:
-                    logger.info(f"Deleting directory: apps/{item.name}")
-                delete_directory_contents(repo, item.path, verbose)
+                logger.info(f"Deleting directory: apps/{item.name}")
+                delete_directory_contents(repo, item.path, skip_ci=skip_ci)
             else:
-                if verbose:
-                    logger.info(f"Deleting file: apps/{item.name}")
+                logger.info(f"Deleting file: apps/{item.name}")
                 repo.delete_file(
                     path=item.path,
-                    message=f"Clear apps directory: remove {item.name}",
+                    message=f"Clear apps directory: remove {item.name}{ci_suffix}",
                     sha=item.sha
                 )
         
-        if verbose:
-            logger.info(f"✓ Successfully cleared apps/ directory ({items_count} items removed)")
+        logger.info(f"✓ Successfully cleared apps/ directory ({items_count} items removed)")
         
         return items_count
         
     except GithubException as e:
         if e.status == 404:
-            if verbose:
-                logger.info("✓ apps/ directory does not exist - nothing to clear")
+            logger.info("✓ apps/ directory does not exist - nothing to clear")
             return 0
         else:
             raise
 
-def get_captain_repo(token: str, repo_url: str, verbose: bool = True):
+def get_captain_repo(token: str, repo_url: str):
     """
     Get a GitHub repository object for the captain domain repo using a separate token.
     
     Args:
         token: GitHub personal access token with access to the captain repo
         repo_url: Full GitHub URL (e.g., 'https://github.com/development-captains/nonprod.jupiter.onglueops.rocks')
-        verbose: Whether to log details
         
     Returns:
         tuple: (Github client, Repository object)
@@ -551,8 +659,7 @@ def get_captain_repo(token: str, repo_url: str, verbose: bool = True):
     org_name, repo_name = match.groups()
     full_name = f"{org_name}/{repo_name}"
     
-    if verbose:
-        logger.info(f"Connecting to captain repo: {full_name}")
+    logger.info(f"Connecting to captain repo: {full_name}")
     
     # Create GitHub client with the captain token
     from github import Auth
@@ -562,13 +669,12 @@ def get_captain_repo(token: str, repo_url: str, verbose: bool = True):
     # Get the repository
     repo = g.get_repo(full_name)
     
-    if verbose:
-        logger.info(f"✓ Connected to captain repo: {repo.html_url}")
+    logger.info(f"✓ Connected to captain repo: {repo.html_url}")
     
     return g, repo
 
 
-def create_or_update_file(repo, file_path: str, content: str, commit_message: str, verbose: bool = True):
+def create_or_update_file(repo, file_path: str, content: str, commit_message: str, skip_ci=True):
     """
     Create a file or update it if it already exists.
     
@@ -580,7 +686,7 @@ def create_or_update_file(repo, file_path: str, content: str, commit_message: st
         file_path: Path to the file in the repository
         content: File content as string
         commit_message: Git commit message
-        verbose: Whether to log details
+        skip_ci: Whether to add [skip ci] to commit message (default: True)
         
     Returns:
         dict: Result from create_file or update_file with commit info
@@ -589,14 +695,14 @@ def create_or_update_file(repo, file_path: str, content: str, commit_message: st
         RuntimeError: If file creation/update fails validation
         GithubException: If GitHub API call fails
     """
+    ci_suffix = " [skip ci]" if skip_ci else ""
     try:
         # Try to create the file first
-        if verbose:
-            logger.info(f"Creating file: {file_path}")
+        logger.info(f"Creating file: {file_path}")
         
         result = repo.create_file(
             path=file_path,
-            message=commit_message,
+            message=f"{commit_message}{ci_suffix}",
             content=content
         )
         
@@ -612,18 +718,17 @@ def create_or_update_file(repo, file_path: str, content: str, commit_message: st
         if not commit_sha:
             raise RuntimeError(f"GitHub API returned empty SHA for {file_path}")
         
-        if verbose:
-            logger.info(f"✓ File created: {file_path}")
-            logger.info(f"  Commit SHA: {commit_sha[:8]}")
-            logger.info(f"  URL: {repo.html_url}/blob/{repo.default_branch}/{file_path}")
+        logger.info(f"✓ File created: {file_path}")
+        logger.info(f"  Full SHA: {commit_sha}")
+        logger.info(f"  Short SHA: {commit_sha[:8]}")
+        logger.info(f"  URL: {repo.html_url}/blob/{repo.default_branch}/{file_path}")
         
         return result
         
     except GithubException as e:
         if e.status == 422:
             # File exists, need to update instead
-            if verbose:
-                logger.info(f"File exists, updating: {file_path}")
+            logger.info(f"File exists, updating: {file_path}")
             
             try:
                 # Get the current file to get its SHA
@@ -631,7 +736,7 @@ def create_or_update_file(repo, file_path: str, content: str, commit_message: st
                 
                 result = repo.update_file(
                     path=file_path,
-                    message=commit_message,
+                    message=f"{commit_message}{ci_suffix}",
                     content=content,
                     sha=existing_file.sha
                 )
@@ -648,10 +753,10 @@ def create_or_update_file(repo, file_path: str, content: str, commit_message: st
                 if not commit_sha:
                     raise RuntimeError(f"GitHub API returned empty SHA for {file_path}")
                 
-                if verbose:
-                    logger.info(f"✓ File updated: {file_path}")
-                    logger.info(f"  Commit SHA: {commit_sha[:8]}")
-                    logger.info(f"  URL: {repo.html_url}/blob/{repo.default_branch}/{file_path}")
+                logger.info(f"✓ File updated: {file_path}")
+                logger.info(f"  Full SHA: {commit_sha}")
+                logger.info(f"  Short SHA: {commit_sha[:8]}")
+                logger.info(f"  URL: {repo.html_url}/blob/{repo.default_branch}/{file_path}")
                 
                 return result
             except GithubException as update_error:
@@ -662,7 +767,7 @@ def create_or_update_file(repo, file_path: str, content: str, commit_message: st
             raise
 
 
-def delete_file_if_exists(repo, file_path: str, commit_message: Optional[str] = None, verbose: bool = True) -> bool:
+def delete_file_if_exists(repo, file_path: str, commit_message: Optional[str] = None, skip_ci=True):
     """
     Delete a file from a repository if it exists.
     
@@ -670,11 +775,12 @@ def delete_file_if_exists(repo, file_path: str, commit_message: Optional[str] = 
         repo: GitHub Repository object
         file_path: Path to the file to delete
         commit_message: Git commit message (defaults to "Delete {file_path}")
-        verbose: Whether to log details
+        skip_ci: Whether to add [skip ci] to commit message (default: True)
         
     Returns:
-        bool: True if file was deleted, False if it didn't exist
+        str or None: Commit SHA if file was deleted, None if it didn't exist
     """
+    ci_suffix = " [skip ci]" if skip_ci else ""
     if commit_message is None:
         commit_message = f"Delete {file_path}"
     
@@ -682,25 +788,25 @@ def delete_file_if_exists(repo, file_path: str, commit_message: Optional[str] = 
         # Get the file to get its SHA
         existing_file = repo.get_contents(file_path)
         
-        if verbose:
-            logger.info(f"Deleting file: {file_path}")
+        logger.info(f"Deleting file: {file_path}")
         
-        repo.delete_file(
+        result = repo.delete_file(
             path=file_path,
-            message=commit_message,
+            message=f"{commit_message}{ci_suffix}",
             sha=existing_file.sha
         )
         
-        if verbose:
-            logger.info(f"✓ File deleted: {file_path}")
+        commit_sha = result['commit'].sha
         
-        return True
+        logger.info(f"✓ File deleted: {file_path}")
+        logger.info(f"  Commit SHA: {commit_sha[:8]}")
+        
+        return commit_sha
         
     except GithubException as e:
         if e.status == 404:
-            if verbose:
-                logger.info(f"File does not exist (nothing to delete): {file_path}")
-            return False
+            logger.info(f"File does not exist (nothing to delete): {file_path}")
+            return None
         else:
             raise
 

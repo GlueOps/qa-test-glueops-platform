@@ -73,7 +73,7 @@ def test_vault_secret_creation(vault_client, request):
     logger.info("STEP 1: Creating secrets")
     logger.info("="*70)
     created_paths, create_failures = create_multiple_vault_secrets(
-        client, secret_configs, verbose=True
+        client, secret_configs
     )
     
     if create_failures:
@@ -88,7 +88,7 @@ def test_vault_secret_creation(vault_client, request):
     logger.info("STEP 2: Verifying secrets")
     logger.info("="*70)
     verify_failures = verify_vault_secrets(
-        client, created_paths, sample_size=5, verbose=True
+        client, created_paths, sample_size=5
     )
     
     if verify_failures:
@@ -115,7 +115,7 @@ def test_vault_secret_creation(vault_client, request):
         logger.info("STEP 4: Cleanup")
         logger.info("="*70)
         deleted_paths, cleanup_failures = delete_multiple_vault_secrets(
-            client, created_paths, verbose=True
+            client, created_paths
         )
         
         if cleanup_failures:

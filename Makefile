@@ -3,7 +3,7 @@
         quick api ui gitops gitops-deployment letsencrypt preview-environments full
 
 # Docker run base configuration
-DOCKER_RUN = docker run --rm --network host
+DOCKER_RUN = docker run --rm -it --network host
 DOCKER_VOLUMES = -v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
                  -v "/workspaces/glueops:/workspaces/glueops:ro" \
                  -v "$$(pwd)/allure-results:/app/allure-results" \
@@ -154,7 +154,7 @@ clean:
 
 clean-reports:
 	@echo "Removing Allure results and reports..."
-	@sudo rm -rf allure-results allure-report
+	@sudo rm -rf allure-results allure-report screenshots
 	@mkdir -p allure-results allure-report
 
 clean-baselines:
@@ -209,11 +209,17 @@ lint: build
 
 ci: build  ## Run all static analysis checks (lint + typecheck)
 	@echo "Running CI checks..."
-	@docker run --rm -t --entrypoint sh glueops-tests -c "pylint tests/ --disable=C,R,W --max-line-length=120"
+	@echo "1/2 Running pylint..."
+	@docker run --rm -t --entrypoint sh glueops-tests -c "pylint tests/ --disable=C,R,W --enable=W0404,W0611,W0102,W0106 --max-line-length=120"
 	@echo "✓ Lint passed"
-	@docker run --rm -t --entrypoint sh glueops-tests -c "mypy tests/"
+	@echo ""
+	@echo "2/2 Running mypy..."
+	@docker run --rm -t --entrypoint sh glueops-tests -c "mypy tests/ --warn-unused-ignores --warn-redundant-casts"
 	@echo "✓ Type checks passed"
-	@echo "✓ All CI checks passed!"
+	@echo ""
+	@echo "✅ All CI checks passed!"
+	@echo ""
+	@echo "✅ All CI checks passed!"
 
 # Catch-all pattern rule to allow passing test paths directly
 # This allows: make test tests/smoke/test_file.py::test_name

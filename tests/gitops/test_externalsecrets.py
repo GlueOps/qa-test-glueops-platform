@@ -6,7 +6,6 @@ Creates secrets in Vault, deploys apps that reference them,
 and validates the secrets are synced as environment variables.
 """
 import pytest
-from pathlib import Path
 import uuid
 import logging
 import random
@@ -22,8 +21,7 @@ from tests.helpers.github import create_github_file
 from tests.helpers.argocd import wait_for_appset_apps_created_and_healthy, calculate_expected_app_count
 from tests.helpers.utils import print_section_header, print_summary_list
 from tests.helpers.vault import (
-    create_multiple_vault_secrets,
-    delete_multiple_vault_secrets
+    create_multiple_vault_secrets
 )
 
 logger = logging.getLogger(__name__)
@@ -123,8 +121,7 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
     # Create secrets in Vault
     created_paths, create_failures = create_multiple_vault_secrets(
         vault_client,
-        vault_secrets_config,
-        verbose=True
+        vault_secrets_config
     )
     
     if create_failures:
@@ -150,9 +147,7 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
             repo=repo,
             file_path=file_path,
             content=file_content,
-            commit_message=f"Add {app_name} with External Secrets",
-            verbose=True,
-            log_content=True
+            commit_message=f"Add {app_name} with External Secrets"
         )
     
     print_summary_list(
@@ -166,8 +161,7 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
     apps_ready = wait_for_appset_apps_created_and_healthy(
         custom_api,
         namespace=captain_manifests['namespace'],
-        expected_count=expected_total,
-        verbose=True
+        expected_count=expected_total
     )
     
     if not apps_ready:
@@ -176,17 +170,17 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
     # Check ArgoCD application health and sync status
     print_section_header("STEP 4: Checking ArgoCD Application Status")
     
-    assert_argocd_healthy(custom_api, namespace_filter=None, verbose=True)
+    assert_argocd_healthy(custom_api, namespace_filter=None)
     
     # Check pod health across all platform namespaces
     print_section_header("STEP 5: Checking Pod Health")
     
-    assert_pods_healthy(core_v1, platform_namespaces, verbose=True)
+    assert_pods_healthy(core_v1, platform_namespaces)
     
     # Validate Ingress configuration
     print_section_header("STEP 6: Validating Ingress Configuration")
     
-    total_ingresses = assert_ingress_valid(networking_v1, platform_namespaces, verbose=True)
+    total_ingresses = assert_ingress_valid(networking_v1, platform_namespaces)
     
     # Validate DNS resolution for Ingress hosts
     print_section_header("STEP 7: Validating Ingress DNS Resolution")
@@ -194,8 +188,7 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
     checked_count = assert_ingress_dns_valid(
         networking_v1,
         platform_namespaces,
-        dns_server='1.1.1.1',
-        verbose=True
+        dns_server='1.1.1.1'
     )
     
     # Validate environment variables from Vault
@@ -226,8 +219,7 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
             expected_env_vars=expected_env_vars,
             app_name=app_name,
             max_retries=3,
-            retry_delays=[10, 30, 60],
-            verbose=True
+            retry_delays=[10, 30, 60]
         )
         
         if problems:

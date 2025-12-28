@@ -31,7 +31,7 @@ def test_argocd_applications(custom_api, namespace_filter, capsys):
     logger.info("ARGOCD APPLICATION HEALTH CHECK")
     logger.info("="*70)
     
-    problems = validate_all_argocd_apps(custom_api, namespace_filter, verbose=True)
+    problems = validate_all_argocd_apps(custom_api, namespace_filter)
     
     logger.info("\n" + "="*70)
     logger.info("SUMMARY")
