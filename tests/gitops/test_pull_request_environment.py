@@ -5,13 +5,17 @@ Tests the complete PR lifecycle for preview environments including:
 1. Creating a new repository with Dockerfile and GitHub Actions workflow
 2. Pushing container images to the in-cluster registry
 3. Creating PRs with the -glueops-preview branch suffix
-4. Holding PRs open for in-cluster automation to comment
-5. Cleanup and teardown
+4. Waiting for in-cluster automation to comment with deployment details
+5. Validating all URLs from the bot comment (ArgoCD, Grafana, Loki, Preview)
+6. Taking screenshots of each service
+7. Cleanup and teardown
 
 The test validates that the PR comment automation works correctly by:
 - Creating a real repository with container build pipeline
 - Opening a PR and waiting for in-cluster automation to interact with it
-- Verifying the PR lifecycle completes successfully
+- Parsing the bot comment and validating commit SHA matches
+- Loading each URL with authenticated browser sessions
+- Capturing screenshots for test evidence
 """
 import pytest
 import os
@@ -19,6 +23,7 @@ import time
 import uuid
 import logging
 import re
+import requests
 from github.Organization import Organization
 from github.NamedUser import NamedUser
 from github.AuthenticatedUser import AuthenticatedUser
@@ -31,6 +36,12 @@ from tests.helpers.github import (
     create_dummy_commit,
     create_pull_request,
     create_github_file,
+    wait_for_bot_comment,
+)
+from tests.helpers.browser import (
+    get_browser_connection,
+    create_authenticated_page,
+    ScreenshotManager,
 )
 from tests.helpers.utils import display_progress_bar, print_section_header
 
@@ -149,6 +160,9 @@ def test_pull_request_environment(
     branch_name: str,
     captain_manifests: dict,
     ephemeral_github_repo,
+    captain_domain: str,
+    github_credentials: dict,
+    request,
 ) -> None:
     """
     Test pull request environment workflow with container build pipeline.
@@ -158,14 +172,17 @@ def test_pull_request_environment(
     1. Creates repo with Dockerfile and workflow (pushes to in-cluster registry)
     2. Creates branch with -glueops-preview suffix (required for ApplicationSet)
     3. Creates PR with a dummy commit to trigger the container build
-    4. Waits 3 minutes for in-cluster automation to comment on the PR
-    5. Cleans up by closing PR and deleting the test repository
+    4. Waits for automation bot to comment with deployment details (5 min timeout)
+    5. Validates commit SHA in comment matches PR head
+    6. Screenshots all URLs: GitHub PR, ArgoCD, Deployment Preview, Grafana, Loki
+    7. Cleans up - repository auto-deleted by cleanup fixture
     
     Validates:
     - Repository creation with container build setup
     - Branch naming with ApplicationSet-compatible suffix
     - PR creation triggers container build asynchronously
-    - In-cluster automation has time to interact with the PR
+    - Bot comment appears with correct deployment URLs
+    - All deployment URLs are accessible and functional
     
     Cluster Impact: WRITE (creates GitHub resources, pushes container images)
     """
@@ -367,17 +384,216 @@ ingress:
         logger.info(f"PR Number: #{pr.number}")
         
         # ================================================================
-        # Wait for in-cluster automation (3 minutes)
+        # Wait for bot comment (5 minute timeout)
         # ================================================================
-        next_step("Waiting for In-Cluster Automation")
-        logger.info("Holding PR open for 3 minutes to allow automation to comment...")
+        next_step("Waiting for Bot Comment")
+        logger.info("Polling for automation bot comment (5 minute timeout)...")
         logger.info(f"PR URL: {pr.html_url}")
         
-        display_progress_bar(
-            wait_time=180,  # 3 minutes
-            interval=30,
-            description="Waiting for in-cluster automation"
+        comment_data = wait_for_bot_comment(pr, timeout=300, poll_interval=15)
+        
+        # ================================================================
+        # Validate commit SHA matches
+        # ================================================================
+        next_step("Validating Comment Data")
+        
+        pr.update()  # Refresh PR to get latest head SHA
+        expected_sha = pr.head.sha
+        comment_sha = comment_data['latest_commit']
+        
+        if comment_sha != expected_sha:
+            pytest.fail(
+                f"Commit SHA mismatch!\n"
+                f"  Expected (PR head): {expected_sha}\n"
+                f"  Got (from comment): {comment_sha}"
+            )
+        logger.info(f"✓ Commit SHA matches: {expected_sha[:8]}")
+        
+        # Validate all URLs were parsed
+        required_urls = ['argocd_url', 'deployment_preview_url', 'grafana_metrics_url', 'loki_logs_url']
+        missing = [k for k in required_urls if not comment_data.get(k)]
+        if missing:
+            pytest.fail(f"Missing URLs in comment: {missing}\n\nRaw comment:\n{comment_data['raw_body']}")
+        logger.info("✓ All required URLs parsed from comment")
+        
+        # ================================================================
+        # Validate QR Code URL
+        # ================================================================
+        next_step("Validating QR Code")
+        
+        qr_code_url = comment_data.get('qr_code_url')
+        preview_url = comment_data['deployment_preview_url']
+        
+        if qr_code_url:
+            logger.info(f"🔍 Validating QR code encodes correct URL...")
+            logger.info(f"   QR Code URL: {qr_code_url}")
+            logger.info(f"   Expected encoded URL: {preview_url}")
+            
+            # Download the QR code image
+            qr_response = requests.get(qr_code_url, timeout=30)
+            if qr_response.status_code != 200:
+                pytest.fail(f"Failed to download QR code: HTTP {qr_response.status_code}")
+            
+            # Decode the QR code
+            try:
+                from PIL import Image
+                from pyzbar.pyzbar import decode
+                import io
+                
+                img = Image.open(io.BytesIO(qr_response.content))
+                decoded_objects = decode(img)
+                
+                if not decoded_objects:
+                    pytest.fail("Could not decode QR code - no data found")
+                
+                qr_data = decoded_objects[0].data.decode('utf-8')
+                logger.info(f"   QR code decoded: {qr_data}")
+                
+                # Validate QR code contains the deployment preview URL
+                if qr_data.rstrip('/') != preview_url.rstrip('/'):
+                    pytest.fail(
+                        f"QR code URL mismatch!\n"
+                        f"  Expected: {preview_url}\n"
+                        f"  Got: {qr_data}"
+                    )
+                logger.info(f"   ✓ QR code correctly encodes deployment preview URL")
+                
+            except ImportError:
+                logger.warning("   ⚠ pyzbar/PIL not installed - skipping QR decode validation")
+                # Fallback: check that the QR URL contains the preview URL as a parameter
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(qr_code_url)
+                query_params = parse_qs(parsed.query)
+                qr_target_url = query_params.get('url', [''])[0]
+                
+                if qr_target_url.rstrip('/') != preview_url.rstrip('/'):
+                    pytest.fail(
+                        f"QR code URL parameter mismatch!\n"
+                        f"  Expected: {preview_url}\n"
+                        f"  Got: {qr_target_url}"
+                    )
+                logger.info(f"   ✓ QR code URL parameter matches deployment preview URL")
+        else:
+            logger.warning("   ⚠ No QR code URL found in comment")
+        
+        # ================================================================
+        # Setup browser and screenshot manager
+        # ================================================================
+        next_step("Capturing Screenshots")
+        
+        playwright, browser, session = get_browser_connection()
+        screenshot_manager = ScreenshotManager(
+            test_name=f"pr_env_{repo_name.replace(' ', '_').lower()}",
+            request=request
         )
+        
+        # Track contexts for cleanup
+        contexts_to_close = []
+        
+        try:
+            # ================================================================
+            # Screenshot GitHub PR with bot comment
+            # ================================================================
+            logger.info("📸 1/5: Capturing GitHub PR page with bot comment...")
+            github_page, github_ctx = create_authenticated_page(
+                browser, 'github', github_credentials
+            )
+            contexts_to_close.append(github_ctx)
+            
+            github_page.goto(pr.html_url, wait_until="load", timeout=30000)
+            github_page.wait_for_timeout(3000)
+            screenshot_manager.capture(github_page, pr.html_url, "GitHub PR with bot comment")
+            logger.info(f"   ✓ GitHub PR screenshot captured")
+            
+            # ================================================================
+            # Screenshot ArgoCD application
+            # ================================================================
+            logger.info(f"📸 2/5: Capturing ArgoCD: {comment_data['argocd_url']}")
+            argocd_page, argocd_ctx = create_authenticated_page(
+                browser, 'argocd', github_credentials, captain_domain
+            )
+            contexts_to_close.append(argocd_ctx)
+            
+            argocd_page.goto(comment_data['argocd_url'], wait_until="load", timeout=30000)
+            argocd_page.wait_for_timeout(5000)  # ArgoCD can be slow to render
+            screenshot_manager.capture(argocd_page, comment_data['argocd_url'], "ArgoCD Application")
+            logger.info(f"   ✓ ArgoCD screenshot captured")
+            
+            # ================================================================
+            # Validate and screenshot deployment preview
+            # ================================================================
+            logger.info(f"📸 3/5: Validating deployment preview: {preview_url}")
+            
+            response = requests.get(preview_url, timeout=30, verify=True)
+            
+            if response.status_code != 200:
+                pytest.fail(f"Deployment preview returned HTTP {response.status_code}")
+            
+            # Parse JSON and validate host header matches the URL hostname
+            json_data = response.json()
+            host_header = json_data.get('headers', {}).get('host', '')
+            expected_host = preview_url.replace('http://', '').replace('https://', '').rstrip('/')
+            
+            if host_header != expected_host:
+                pytest.fail(
+                    f"Host header mismatch!\n"
+                    f"  Expected: {expected_host}\n"
+                    f"  Got: {host_header}"
+                )
+            logger.info(f"   ✓ Deployment preview responding correctly (host: {host_header})")
+            
+            # Use existing github page for unauthenticated preview screenshot
+            github_page.goto(preview_url, wait_until="load", timeout=30000)
+            github_page.wait_for_timeout(2000)
+            screenshot_manager.capture(github_page, preview_url, "Deployment Preview (HTTP Debug)")
+            logger.info(f"   ✓ Deployment preview screenshot captured")
+            
+            # ================================================================
+            # Screenshot Loki logs first (before metrics wait)
+            # ================================================================
+            logger.info(f"📸 4/5: Capturing Loki logs: {comment_data['loki_logs_url']}")
+            grafana_page, grafana_ctx = create_authenticated_page(
+                browser, 'grafana', github_credentials, captain_domain
+            )
+            contexts_to_close.append(grafana_ctx)
+            
+            grafana_page.goto(comment_data['loki_logs_url'], wait_until="load", timeout=30000)
+            grafana_page.wait_for_timeout(5000)
+            screenshot_manager.capture(grafana_page, comment_data['loki_logs_url'], "Loki Logs Dashboard")
+            logger.info(f"   ✓ Loki logs screenshot captured")
+            
+            # ================================================================
+            # Wait for metrics to populate, then screenshot Grafana
+            # ================================================================
+            logger.info(f"📸 5/5: Waiting for metrics to populate...")
+            display_progress_bar(
+                wait_time=120,  # 2 minutes
+                interval=15,
+                description="Waiting for Grafana metrics to populate"
+            )
+            
+            logger.info(f"   Capturing Grafana metrics: {comment_data['grafana_metrics_url']}")
+            grafana_page.goto(comment_data['grafana_metrics_url'], wait_until="load", timeout=30000)
+            grafana_page.wait_for_timeout(5000)  # Grafana needs time to load panels
+            screenshot_manager.capture(grafana_page, comment_data['grafana_metrics_url'], "Grafana Metrics Dashboard")
+            logger.info(f"   ✓ Grafana metrics screenshot captured")
+            
+            # Log screenshot summary
+            screenshot_manager.log_summary()
+            
+        finally:
+            # Close all browser contexts
+            for ctx in contexts_to_close:
+                try:
+                    ctx.close()
+                except Exception:
+                    pass
+            
+            # Cleanup browser connection
+            try:
+                playwright.stop()
+            except Exception:
+                pass
         
         # ================================================================
         # FINAL SUMMARY
@@ -389,6 +605,8 @@ ingress:
         logger.info(f"   Branch name format tested: {branch_name}")
         logger.info(f"   Registry: {registry_hostname}")
         logger.info(f"   PR: #{pr.number} ({pr.html_url})")
+        logger.info(f"   Bot: {comment_data['bot_name']}")
+        logger.info(f"   Screenshots captured: {screenshot_manager.get_screenshot_count()}")
         
     finally:
         # ================================================================

@@ -184,7 +184,7 @@ def create_repo(org, repo_name: str, description: str = "Test repository", priva
     logger.info("🏷️  Setting mandatory cleanup topic...")
     try:
         # Get GitHub client from the org object
-        from github import Github, Auth
+        from github import Auth
         # The org object has a _requester which has the auth token
         g = Github(auth=Auth.Token(org._requester.auth.token if hasattr(org._requester.auth, 'token') else org._requester._Requester__authorizationHeader.split()[-1]))
         set_repo_topics(g, new_repo, ['createdby-automated-test-delete-me'])
@@ -970,3 +970,150 @@ def create_multiple_files(repo, files: list, commit_message: str, branch: str = 
     logger.info(f"  Short SHA: {new_commit.sha[:8]}")
     
     return new_commit.sha
+
+
+def wait_for_bot_comment(pr, timeout: int = 300, poll_interval: int = 15) -> dict:
+    """
+    Wait for a bot to comment on a pull request and parse the automation comment.
+    
+    Polls the PR for comments from any Bot user. When found, parses the markdown
+    table to extract deployment information.
+    
+    Args:
+        pr: GitHub PullRequest object
+        timeout: Maximum time to wait in seconds (default: 300 = 5 minutes)
+        poll_interval: Time between polls in seconds (default: 15)
+        
+    Returns:
+        dict: Parsed comment data with keys:
+            - 'raw_body': Full comment body
+            - 'bot_name': Name of the bot that commented
+            - 'latest_commit': Commit SHA from comment
+            - 'argocd_url': ArgoCD deployment URL
+            - 'deployment_preview_url': Preview environment URL
+            - 'grafana_metrics_url': Grafana metrics dashboard URL
+            - 'loki_logs_url': Loki logs URL
+            
+    Raises:
+        TimeoutError: If no bot comment appears within timeout
+        
+    Example:
+        pr = create_pull_request(repo, "Test PR", "body", "feature", "main")
+        comment_data = wait_for_bot_comment(pr, timeout=300)
+        print(f"ArgoCD: {comment_data['argocd_url']}")
+        print(f"Preview: {comment_data['deployment_preview_url']}")
+    """
+    import re
+    
+    start_time = time.time()
+    
+    logger.info(f"⏳ Waiting for bot comment on PR #{pr.number}...")
+    
+    while time.time() - start_time < timeout:
+        # Get all issue comments (PRs are issues in GitHub API)
+        comments = list(pr.get_issue_comments())
+        
+        # Filter for bot comments
+        bot_comments = [c for c in comments if c.user.type == 'Bot']
+        
+        if bot_comments:
+            # Take the most recent bot comment
+            comment = bot_comments[-1]
+            elapsed = int(time.time() - start_time)
+            logger.info(f"✓ Found bot comment from '{comment.user.login}' after {elapsed}s")
+            
+            # Parse the markdown table
+            return _parse_automation_comment(comment)
+        
+        elapsed = int(time.time() - start_time)
+        logger.info(f"   No bot comment yet ({elapsed}s elapsed, polling every {poll_interval}s)")
+        time.sleep(poll_interval)
+    
+    # Timeout reached
+    raise TimeoutError(
+        f"No bot comment found on PR #{pr.number} after {timeout}s. "
+        f"Expected automation to comment with deployment details."
+    )
+
+
+def _parse_automation_comment(comment) -> dict:
+    """
+    Parse the automation bot's markdown comment to extract deployment URLs.
+    
+    Expected markdown format:
+    | Name | Link |
+    |------|------|
+    | Latest commit | <sha> |
+    | Deployment Details | [ArgoCD](<url>) |
+    | Deployment Preview | <details>...<url>...</details> |
+    | Metrics | [Grafana](<url>) |
+    | Logs | [Loki](<url>) |
+    
+    Args:
+        comment: GitHub IssueComment object
+        
+    Returns:
+        dict: Parsed data with URLs and metadata
+    """
+    import re
+    
+    body = comment.body
+    data = {
+        'raw_body': body,
+        'bot_name': comment.user.login,
+        'latest_commit': None,
+        'argocd_url': None,
+        'deployment_preview_url': None,
+        'grafana_metrics_url': None,
+        'loki_logs_url': None,
+        'qr_code_url': None,
+    }
+    
+    # Extract Latest commit SHA
+    # Format: | Latest commit | f824d40a6d0b7f54e626c8ac425bd91941fbfe54 |
+    commit_match = re.search(r'Latest commit\s*\|\s*([a-f0-9]{40})', body, re.IGNORECASE)
+    if commit_match:
+        commit_sha = commit_match.group(1)
+        data['latest_commit'] = commit_sha
+        logger.info(f"   Parsed commit SHA: {commit_sha[:8]}")
+    
+    # Extract ArgoCD URL
+    # Format: [ArgoCD](https://argocd.nonprod.jupiter.onglueops.rocks/applications/...)
+    argocd_match = re.search(r'\[ArgoCD\]\(([^)]+)\)', body)
+    if argocd_match:
+        data['argocd_url'] = argocd_match.group(1)
+        logger.info(f"   Parsed ArgoCD URL: {data['argocd_url']}")
+    
+    # Extract Deployment Preview URL
+    # Format: <summary>http://...-pr-1.apps.nonprod...</summary> or just the URL in markdown
+    # Can be in <details><summary>URL</summary>...</details> or as plain link
+    preview_match = re.search(r'<summary>(https?://[^<]+)</summary>', body)
+    if not preview_match:
+        # Try alternate format: http://...-pr-N.apps. pattern
+        preview_match = re.search(r'(https?://[a-f0-9]+-[^\s"<>]+\.apps\.[^\s"<>]+)', body)
+    if preview_match:
+        data['deployment_preview_url'] = preview_match.group(1)
+        logger.info(f"   Parsed Preview URL: {data['deployment_preview_url']}")
+    
+    # Extract QR Code URL
+    # Format: <img src="https://qr-code-generator.../v1/qr?url=..." ...>
+    qr_match = re.search(r'<img\s+src="(https?://[^"]+qr[^"]+)"', body)
+    if qr_match:
+        data['qr_code_url'] = qr_match.group(1)
+        logger.info(f"   Parsed QR Code URL: {data['qr_code_url']}")
+    
+    # Extract Grafana Metrics URL
+    # Format: [Grafana](https://grafana.nonprod.../d/...)
+    grafana_match = re.search(r'\[Grafana\]\(([^)]+)\)', body)
+    if grafana_match:
+        data['grafana_metrics_url'] = grafana_match.group(1)
+        logger.info(f"   Parsed Grafana URL: {data['grafana_metrics_url']}")
+    
+    # Extract Loki Logs URL
+    # Format: [Loki](https://grafana.nonprod.../d/tBmi6B0Vz/loki-logs...)
+    loki_match = re.search(r'\[Loki\]\(([^)]+)\)', body)
+    if loki_match:
+        data['loki_logs_url'] = loki_match.group(1)
+        logger.info(f"   Parsed Loki URL: {data['loki_logs_url']}")
+    
+    return data

@@ -553,3 +553,123 @@ def login_to_service_via_github_sso(
     except Exception as e:
         log.error(f"❌ Error logging into {service_name}: {e}")
         return False
+
+
+# =============================================================================
+# FRESH AUTHENTICATED PAGE FACTORY
+# =============================================================================
+
+def create_authenticated_page(
+    browser: Browser,
+    service: str,
+    credentials: dict,
+    captain_domain: Optional[str] = None
+) -> tuple:
+    """
+    Create a fresh browser context and authenticate to a service.
+    
+    Each call creates a completely isolated browser context with its own
+    cookies and session state. This allows multiple authenticated sessions
+    to different services simultaneously.
+    
+    Args:
+        browser: Playwright browser instance
+        service: Service to authenticate to. One of:
+            - 'github': Direct GitHub login (github.com/login)
+            - 'argocd': ArgoCD via GitHub SSO
+            - 'grafana': Grafana via GitHub SSO
+        credentials: Dict with 'username', 'password', 'otp_secret' keys
+        captain_domain: Required for argocd/grafana (e.g., 'nonprod.jupiter.onglueops.rocks')
+        
+    Returns:
+        tuple: (page, context) - Both must be closed by caller when done
+        
+    Example:
+        page, context = create_authenticated_page(browser, 'github', creds)
+        page.goto("https://github.com/org/repo/pull/1")
+        screenshots.capture(page, page.url, "PR Page")
+        context.close()  # Clean up when done
+    """
+    log.info(f"🔐 Creating fresh authenticated page for: {service}")
+    
+    # Create isolated context
+    context = browser.new_context(ignore_https_errors=False)
+    page = context.new_page()
+    
+    if service == 'github':
+        log.info("   Authenticating to GitHub directly...")
+        page.goto("https://github.com/login", wait_until="load", timeout=30000)
+        complete_github_oauth_flow(page, credentials)
+        page.wait_for_timeout(2000)
+        
+        if "/login" in page.url or "/sessions" in page.url:
+            context.close()
+            raise Exception(f"GitHub login failed - still on login page: {page.url}")
+        
+        log.info(f"   ✓ GitHub authenticated - URL: {page.url}")
+        
+    elif service == 'argocd':
+        if not captain_domain:
+            context.close()
+            raise ValueError("captain_domain required for ArgoCD authentication")
+        
+        log.info(f"   Authenticating to ArgoCD via GitHub SSO...")
+        url = f"https://argocd.{captain_domain}/applications"
+        page.goto(url, wait_until="load", timeout=30000)
+        
+        # Handle GitHub OAuth if redirected
+        if "github.com" in page.url:
+            complete_github_oauth_flow(page, credentials)
+            page.wait_for_timeout(3000)
+        
+        # If on login page, click SSO button
+        if "/login" in page.url:
+            try:
+                page.get_by_role("button", name="Log in via GitHub SSO").click()
+                page.wait_for_timeout(5000)
+                if "github.com" in page.url:
+                    complete_github_oauth_flow(page, credentials)
+                    page.wait_for_timeout(3000)
+            except Exception:
+                pass
+        
+        # Navigate to service one final time
+        page.goto(url, wait_until="load", timeout=30000)
+        page.wait_for_timeout(3000)
+        log.info(f"   ✓ ArgoCD authenticated - URL: {page.url}")
+        
+    elif service == 'grafana':
+        if not captain_domain:
+            context.close()
+            raise ValueError("captain_domain required for Grafana authentication")
+        
+        log.info(f"   Authenticating to Grafana via GitHub SSO...")
+        url = f"https://grafana.{captain_domain}"
+        page.goto(url, wait_until="load", timeout=30000)
+        
+        # Handle GitHub OAuth if redirected
+        if "github.com" in page.url:
+            complete_github_oauth_flow(page, credentials)
+            page.wait_for_timeout(3000)
+        
+        # If on login page, click SSO link
+        if "/login" in page.url:
+            try:
+                page.get_by_role("link", name="Sign in with GitHub SSO").click()
+                page.wait_for_timeout(5000)
+                if "github.com" in page.url:
+                    complete_github_oauth_flow(page, credentials)
+                    page.wait_for_timeout(3000)
+            except Exception:
+                pass
+        
+        # Navigate to service one final time
+        page.goto(url, wait_until="load", timeout=30000)
+        page.wait_for_timeout(3000)
+        log.info(f"   ✓ Grafana authenticated - URL: {page.url}")
+        
+    else:
+        context.close()
+        raise ValueError(f"Unknown service: {service}. Must be 'github', 'argocd', or 'grafana'")
+    
+    return page, context
