@@ -253,6 +253,50 @@ def pytest_runtest_setup(item):
             logger.info(f"{'='*80}\n")
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_teardown(item, nextitem):
+    """
+    Pause before teardown for manual inspection of test resources.
+    
+    When TEARDOWN_WAIT environment variable is set to a truthy value
+    (TRUE, true, 1, yes, etc.), this hook will block and wait for user
+    input before any fixture teardowns execute.
+    
+    Useful for debugging tests by inspecting ArgoCD apps, namespaces,
+    GitHub repos, and other resources before cleanup.
+    
+    Usage:
+        TEARDOWN_WAIT=1 pytest tests/test_deployment_workflow.py
+    """
+    teardown_wait = os.getenv('TEARDOWN_WAIT', '').strip().lower()
+    
+    # Check if truthy: any of these values enable the wait
+    if teardown_wait in ('1', 'true', 'yes', 'y', 'on'):
+        test_name = item.nodeid
+        logger.info(f"\n{'='*80}")
+        logger.info(f"⏸️  TEARDOWN PAUSED for test: {test_name}")
+        logger.info(f"{'='*80}")
+        logger.info("You can now inspect test resources:")
+        logger.info("  - ArgoCD applications")
+        logger.info("  - Kubernetes namespaces and resources")
+        logger.info("  - GitHub repositories")
+        logger.info("  - Browser state (if UI test)")
+        logger.info("\n")
+        logger.info("Press Enter to continue with teardown and cleanup.")
+        logger.info("\n")
+        logger.info(f"{'='*80}")
+        
+        try:
+            # Use /dev/tty directly to read from terminal (works in Docker with -it)
+            with open('/dev/tty', 'r') as tty:
+                print("Press Enter to continue with teardown and cleanup...")
+                tty.readline()
+        except Exception as e:
+            logger.warning(f"\nInput not available ({e}), continuing with teardown...")
+        
+        logger.info("Proceeding with teardown...\n")
+
+
 # =============================================================================
 # TERMINAL SUMMARY
 # =============================================================================

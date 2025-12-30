@@ -1,6 +1,6 @@
 .PHONY: help test build clean clean-reports clean-baselines allure-report allure-single-file allure-serve upload-results discover markers fixtures \
-        check-env setup-kubeconfig setup-allure lint typecheck ci \
-        quick api ui gitops gitops-deployment letsencrypt preview-environments full
+        check-env setup-kubeconfig setup-allure setup-docker-base lint typecheck ci list-tests list-files \
+        quick api ui gitops gitops-deployment externalsecrets letsencrypt preview-environments full
 
 # Docker run base configuration
 DOCKER_RUN = docker run --rm -it --network host
@@ -11,6 +11,7 @@ DOCKER_VOLUMES = -v "$$(pwd)/kubeconfig:/kubeconfig:ro" \
                  -v "$$(pwd)/baselines:/app/baselines" \
                  -v "$$(pwd):/app"
 ENV_FILE_FLAG = $(shell [ -f .env ] && echo "--env-file .env" || echo "")
+DOCKER_ENV = -e KUBECONFIG=/kubeconfig -e GIT_BRANCH="$(GIT_BRANCH)" -e GIT_COMMIT="$(GIT_COMMIT)"
 
 # Git metadata
 GIT_BRANCH = $$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'N/A')
@@ -66,7 +67,9 @@ help:
 	@echo "  make clean         - Remove test artifacts and kubeconfig"
 	@echo "  make clean-reports - Remove Allure results and reports"
 	@echo "  make clean-baselines - Remove Prometheus metrics baseline files"
-	@echo "  make discover      - List all tests with descriptions"
+	@echo "  make discover      - List all tests with full descriptions"
+	@echo "  make list-tests    - List all runnable test paths (copy-paste ready)"
+	@echo "  make list-files    - List all test files (run entire files)"
 	@echo "  make markers       - Show available pytest markers"
 	@echo "  make fixtures      - Show available pytest fixtures"
 	@echo "  make ci            - Run all static analysis (lint + typecheck)"
@@ -100,17 +103,15 @@ setup-kubeconfig:
 setup-allure:
 	@mkdir -p allure-results allure-report
 
-test: check-env build setup-kubeconfig setup-allure
+setup-docker-base: check-env build setup-kubeconfig
+
+test: setup-docker-base setup-allure
 	@echo "Running tests with SUITE=$(SUITE)$(if $(MARKER), MARKER=$(MARKER))$(if $(RERUNS), RERUNS=$(RERUNS))..."
 	@$(DOCKER_RUN) $(DOCKER_VOLUMES) \
 		$(ENV_FILE_FLAG) \
-		-e KUBECONFIG=/kubeconfig \
-		-e TZ=UTC \
-		-e GIT_BRANCH="$(GIT_BRANCH)" \
-		-e GIT_COMMIT="$(GIT_COMMIT)" \
-		-e PYTHONUNBUFFERED=1 \
-		--entrypoint sh \
-		glueops-tests -c "\
+		$(DOCKER_ENV) \
+		--entrypoint bash \
+		glueops-tests -ic "\
 			pytest -vv \
 				--color=no \
 				--environment \"$(CAPTAIN_DOMAIN)\" \
@@ -223,35 +224,52 @@ upload-results:
 	echo "✅ Results uploaded to Allure TestOps!"
 
 # Discovery targets
-discover: build
-	docker run --rm -t glueops-tests --collect-only -v --color=yes
+discover: setup-docker-base
+	$(DOCKER_RUN) $(DOCKER_VOLUMES) $(ENV_FILE_FLAG) $(DOCKER_ENV) --entrypoint pytest glueops-tests --collect-only -v --color=yes
 
-markers: build
-	docker run --rm -t glueops-tests --markers --color=yes
+markers: setup-docker-base
+	$(DOCKER_RUN) $(DOCKER_VOLUMES) $(ENV_FILE_FLAG) $(DOCKER_ENV) --entrypoint pytest glueops-tests --markers --color=yes
 
-fixtures: build
-	docker run --rm -t glueops-tests --fixtures --color=yes
+fixtures: setup-docker-base
+	$(DOCKER_RUN) $(DOCKER_VOLUMES) $(ENV_FILE_FLAG) $(DOCKER_ENV) --entrypoint pytest glueops-tests --fixtures --color=yes
+
+# List tests in various formats
+list-tests:
+	@$(MAKE) setup-docker-base
+	@echo "📋 All test paths (copy-paste to run with 'make test <path>'):"
+	@echo ""
+	@$(DOCKER_RUN) $(DOCKER_VOLUMES) $(ENV_FILE_FLAG) $(DOCKER_ENV) --entrypoint sh glueops-tests -c "python3 list_tests.py 2>/dev/null | sed 's/^/  /'"
+	@echo ""
+	@echo "Usage: make test <path>"
+	@echo "Example: make test tests/smoke/test_argocd.py::test_argocd_applications"
+
+list-files:
+	@$(MAKE) setup-docker-base
+	@echo "📁 All test files (run entire file with 'make test <file>'):"
+	@echo ""
+	@$(DOCKER_RUN) $(DOCKER_VOLUMES) $(ENV_FILE_FLAG) $(DOCKER_ENV) --entrypoint sh glueops-tests -c "find tests -name 'test_*.py' -type f | sort | sed 's/^/  /'"
+	@echo ""
+	@echo "Usage: make test <file>"
+	@echo "Example: make test tests/smoke/test_argocd.py"
 
 # Static analysis targets
-typecheck: build
+typecheck: setup-docker-base
 	@echo "Running mypy type checking..."
-	@docker run --rm -t --entrypoint sh glueops-tests -c "mypy tests/ --no-error-summary 2>&1 | head -100"
+	@$(DOCKER_RUN) $(DOCKER_VOLUMES) $(ENV_FILE_FLAG) $(DOCKER_ENV) --entrypoint sh glueops-tests -c "mypy tests/ --no-error-summary 2>&1 | head -100"
 
-lint: build
+lint: setup-docker-base
 	@echo "Running pylint code analysis..."
-	@docker run --rm -t --entrypoint sh glueops-tests -c "pylint tests/ --disable=C,R,W --max-line-length=120 2>&1 | head -100"
+	@$(DOCKER_RUN) $(DOCKER_VOLUMES) $(ENV_FILE_FLAG) $(DOCKER_ENV) --entrypoint sh glueops-tests -c "pylint tests/ --disable=C,R,W --max-line-length=120 2>&1 | head -100"
 
-ci: build  ## Run all static analysis checks (lint + typecheck)
+ci: setup-docker-base  ## Run all static analysis checks (lint + typecheck)
 	@echo "Running CI checks..."
 	@echo "1/2 Running pylint..."
-	@docker run --rm -t --entrypoint sh glueops-tests -c "pylint tests/ --disable=C,R,W --enable=W0404,W0611,W0102,W0106 --max-line-length=120"
+	@$(DOCKER_RUN) $(DOCKER_VOLUMES) $(ENV_FILE_FLAG) $(DOCKER_ENV) --entrypoint sh glueops-tests -c "pylint tests/ --disable=C,R,W --enable=W0404,W0611,W0102,W0106 --max-line-length=120"
 	@echo "✓ Lint passed"
 	@echo ""
 	@echo "2/2 Running mypy..."
-	@docker run --rm -t --entrypoint sh glueops-tests -c "mypy tests/ --warn-unused-ignores --warn-redundant-casts"
+	@$(DOCKER_RUN) $(DOCKER_VOLUMES) $(ENV_FILE_FLAG) $(DOCKER_ENV) --entrypoint sh glueops-tests -c "mypy tests/ --warn-unused-ignores --warn-redundant-casts"
 	@echo "✓ Type checks passed"
-	@echo ""
-	@echo "✅ All CI checks passed!"
 	@echo ""
 	@echo "✅ All CI checks passed!"
 

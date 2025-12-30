@@ -68,7 +68,7 @@ def test_preview_environment_pr_workflow(
     branch_name,
     page,
     request,
-):
+) -> None:
     """
     Test preview environment workflow via PR lifecycle with name variations.
     

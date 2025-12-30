@@ -202,3 +202,122 @@ spec:
         syncOptions:
         - CreateNamespace=true
 """
+
+
+def generate_pullrequest_appset_yaml(
+    namespace_name: str,
+    tenant_github_org: str,
+    deployment_config_repo: str,
+    captain_domain: str
+) -> str:
+    """
+    Generate an ArgoCD ApplicationSet manifest YAML for pull request preview environments.
+    
+    The ApplicationSet auto-discovers pull requests from repositories in the tenant's
+    GitHub organization and creates preview environments for each PR.
+    
+    Uses a matrix generator combining:
+    - scmProvider: Discovers all repositories in the organization
+    - pullRequest: Monitors pull requests in each discovered repository
+    
+    Args:
+        namespace_name: Name of the namespace/environment (e.g., 'nonprod')
+        tenant_github_org: GitHub organization name (e.g., 'development-tenant-jupiter')
+        deployment_config_repo: Name of the deployment configurations repo (e.g., 'deployment-configurations')
+        captain_domain: Full captain domain (e.g., 'nonprod.jupiter.onglueops.rocks')
+        
+    Returns:
+        str: YAML string for the pull request ApplicationSet resource
+    """
+    return f"""apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: pull-request-preview-environments
+  namespace: glueops-core
+spec:
+  goTemplate: true
+  generators:
+  - matrix:
+      generators:
+      - scmProvider:
+          cloneProtocol: https
+          github:
+            allBranches: false
+            organization: {tenant_github_org}
+            appSecretName: tenant-repo-creds
+          filters:
+            - repositoryMatch: demo.*
+              pathsDoNotExist: [common/common-values.yaml]
+            
+      - pullRequest:
+          github:
+            owner: {tenant_github_org}
+            appSecretName: tenant-repo-creds
+            repo: '{{{{ .repository }}}}'
+          requeueAfterSeconds: 30
+  template:
+    metadata:
+      name: >-
+        {{{{- $repo := .repository | replace "_" "-" | replace "." "-" | lower -}}}}
+        {{{{- if gt (len $repo) 41 -}}}}
+          {{{{- printf "%s-%s" ($repo | trunc 35 | trimSuffix "-") ($repo | sha1sum | trunc 5) -}}}}
+        {{{{- else -}}}}
+          {{{{- $repo -}}}}
+        {{{{- end -}}}}-pr-{{{{- .number -}}}}
+      namespace: {namespace_name}
+      annotations:
+        repository_organization: "{tenant_github_org}"
+        repository_name: '{{{{ .repository }}}}'
+        preview_environment: 'true'
+        pull_request_number: '{{{{.number}}}}'
+        branch: '{{{{.branch}}}}'
+        branch_slug: '{{{{.branch_slug}}}}'
+        head_sha: '{{{{.head_sha}}}}'
+        head_short_sha: '{{{{.head_short_sha}}}}'
+      finalizers:
+      - resources-finalizer.argocd.argoproj.io
+      labels:
+        type: pull-request
+    spec:
+      sources:
+        - chart: app
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+            - '$configValues/common/common-values.yaml'
+            - '$configValues/env-overlays/nonprod/env-values.yaml'
+            - '$configValues/apps/{{{{ .repository }}}}/base/base-values.yaml'
+            - '$configValues/apps/{{{{ .repository }}}}/envs/previews/common/values.yaml'
+            - '$configValues/apps/{{{{ .repository }}}}/envs/previews/pull-request-number/{{{{ .number }}}}/values.yaml'
+            values: |-
+              image:
+                tag: '{{{{.head_sha}}}}'
+            
+              captain_domain: {captain_domain}
+            
+          repoURL: https://helm.gpkg.io/project-template
+          targetRevision: 0.9.0-rc5
+        - repoURL: https://github.com/{tenant_github_org}/{{{{ .repository }}}}
+          targetRevision: '{{{{ .head_sha }}}}'
+          ref: values
+        - repoURL: https://github.com/{tenant_github_org}/{deployment_config_repo}
+          targetRevision: main
+          ref: configValues
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m0s
+          limit: 2
+        syncOptions:
+        - CreateNamespace=true
+
+      project: {namespace_name}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: {namespace_name}
+"""

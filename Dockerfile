@@ -18,6 +18,7 @@ COPY . .
 
 # Disable Python output buffering for real-time logs
 ENV PYTHONUNBUFFERED=1
+ENV TZ=UTC
 
 # Use pytest as entrypoint (accepts pytest args)
 ENTRYPOINT ["pytest"]

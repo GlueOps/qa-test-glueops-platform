@@ -58,7 +58,7 @@ def test_pod_health(core_v1, platform_namespaces):
 @pytest.mark.important
 @pytest.mark.readonly
 @pytest.mark.workloads
-def test_failed_jobs(batch_v1, platform_namespaces):
+def test_failed_jobs(batch_v1, platform_namespaces) -> None:
     """Check for failed Jobs across platform namespaces.
     
     Validates Job resources for failure count (status.failed > 0).

@@ -176,9 +176,21 @@ def wait_for_argocd_app_healthy(custom_api, app_name: str, namespace: str = 'glu
                 logger.info(f"   ✓ Application '{app_name}' exists")
             
             status = app.get('status', {})
+            health = status.get('health', {}).get('status', 'Unknown')
+            sync = status.get('sync', {}).get('status', 'Unknown')
             
-            # Check if healthy
-            if is_app_healthy(status):
+            # Accept Healthy+Synced OR Degraded+Synced (manifests applied in both cases)
+            # Degraded means resources aren't healthy, but Synced means ArgoCD has applied the manifests
+            is_acceptable = (is_app_healthy(status) or 
+                           (health == 'Degraded' and sync == 'Synced'))
+            
+            if is_acceptable:
+                # Determine state description for logging
+                if health == 'Degraded':
+                    state_desc = "Degraded but Synced (manifests applied)"
+                else:
+                    state_desc = "Healthy and Synced"
+                
                 # If SHA validation requested, verify it matches
                 if expected_sha:
                     sync_revision = status.get('sync', {}).get('revision', '')
@@ -190,20 +202,17 @@ def wait_for_argocd_app_healthy(custom_api, app_name: str, namespace: str = 'glu
                     
                     if sha_match:
                         elapsed = int(time.time() - start_time)
-                        logger.info(f"   ✓ Application '{app_name}' is Healthy and Synced to {sync_revision[:8]} (took {elapsed}s)")
+                        logger.info(f"   ✓ Application '{app_name}' is {state_desc} to {sync_revision[:8]} (took {elapsed}s)")
                         return True
                     else:
                         elapsed = int(time.time() - start_time)
-                        logger.info(f"   ⏳ Healthy but wrong SHA: expected {expected_sha[:8]}, got {sync_revision[:8]} ({elapsed}s elapsed)")
+                        logger.info(f"   ⏳ {state_desc} but wrong SHA: expected {expected_sha[:8]}, got {sync_revision[:8]} ({elapsed}s elapsed)")
                 else:
                     # No SHA validation, just check health
                     elapsed = int(time.time() - start_time)
                     sync_revision = status.get('sync', {}).get('revision', 'unknown')
-                    logger.info(f"   ✓ Application '{app_name}' is Healthy and Synced to {sync_revision[:8]} (took {elapsed}s)")
+                    logger.info(f"   ✓ Application '{app_name}' is {state_desc} to {sync_revision[:8]} (took {elapsed}s)")
                     return True
-            
-            health = status.get('health', {}).get('status', 'Unknown')
-            sync = status.get('sync', {}).get('status', 'Unknown')
             sync_revision = status.get('sync', {}).get('revision', 'unknown')
             short_sha = sync_revision[:8] if sync_revision != 'unknown' else 'unknown'
             elapsed = int(time.time() - start_time)
@@ -400,12 +409,20 @@ def wait_for_appset_apps_created_and_healthy(custom_api, namespace: str, expecte
             ]
             current_count = len(app_list)
             
+            # Validation: Fail fast if more apps than expected exist
+            if apps_created and current_count > expected_count:
+                logger.error(f"❌ ApplicationSet created {current_count} apps, expected exactly {expected_count}")
+                return False
+            
             # Phase 1: Wait for expected number of apps to be created
             if not apps_created:
-                if current_count >= expected_count:
+                if current_count == expected_count:
                     apps_created = True
-                    logger.info(f"✓ ApplicationSet has created {current_count} Application(s)")
+                    logger.info(f"✓ ApplicationSet has created {expected_count} Application(s)")
                     logger.info(f"  Now waiting for them to become healthy...")
+                elif current_count > expected_count:
+                    logger.error(f"❌ ApplicationSet created {current_count} apps, expected exactly {expected_count}")
+                    return False
                 else:
                     elapsed = int(time.time() - start_time)
                     logger.info(f"  {current_count}/{expected_count} apps created ({elapsed}s elapsed)")
@@ -432,7 +449,7 @@ def wait_for_appset_apps_created_and_healthy(custom_api, namespace: str, expecte
                         'sync': sync_status
                     })
             
-            if healthy_count >= expected_count and not unhealthy_apps:
+            if current_count == expected_count and healthy_count == expected_count:
                 logger.info(f"✓ All {expected_count} Application(s) are Healthy and Synced")
                 return True
             

@@ -296,12 +296,13 @@ def ephemeral_github_repo(request, deployment_config_template_repo, tenant_githu
     Create an ephemeral GitHub repository from a template for testing.
     
     This fixture:
-    1. Cleans up orphaned test repos from previous runs (by topic)
-    2. Creates a repository with unique name from template
-    3. Sets 'createdby-automated-test-delete-me' topic for automated cleanup
-    4. Clears apps/ directory
-    5. Yields the repository object for test use
-    6. Deletes all test repos by topic in teardown
+    1. Creates a repository with unique name from template
+    2. Sets 'createdby-automated-test-delete-me' topic for automated cleanup
+    3. Clears apps/ directory
+    4. Yields the repository object for test use
+    5. Deletes all test repos by topic in teardown
+    
+    Note: Orphaned repos from previous runs are cleaned by session-scoped fixture.
     
     Scope: function (new repo per test)
     
@@ -333,12 +334,6 @@ def ephemeral_github_repo(request, deployment_config_template_repo, tenant_githu
     
     # Get GitHub client and destination owner
     g, dest_owner = _get_github_client_and_owner(github_token, tenant_github_org)
-    
-    # Clean up orphaned test repositories
-    logger.info("\n" + "="*70)
-    logger.info("SETUP: Cleaning up orphaned test repositories")
-    logger.info("="*70)
-    delete_repos_by_topic(dest_owner, 'createdby-automated-test-delete-me')
     
     # Get template repository
     try:

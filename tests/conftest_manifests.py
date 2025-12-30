@@ -16,7 +16,6 @@ from typing import Optional, TypedDict, List
 
 from tests.helpers.k8s import (
     wait_for_argocd_apps_deleted,
-    force_sync_argocd_app,
 )
 from tests.helpers.argocd import (
     wait_for_argocd_apps_by_project_deleted,
@@ -26,6 +25,7 @@ from tests.helpers.argocd import (
 )
 from tests.helpers.github import (
     get_captain_repo,
+    get_repo_latest_sha,
     create_or_update_file,
     delete_file_if_exists,
     create_github_file,
@@ -35,11 +35,97 @@ from tests.helpers.manifests import (
     generate_namespace_yaml,
     generate_appproject_yaml,
     generate_appset_yaml,
+    generate_pullrequest_appset_yaml,
 )
 from tests.templates import load_template
+from tests.helpers.github import delete_repos_by_topic
 
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# SESSION-SCOPED CLEANUP
+# =============================================================================
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_orphaned_test_resources_session(
+    custom_api,
+    captain_domain,
+    captain_domain_repo_url,
+    captain_domain_github_token,
+    tenant_github_org
+):
+    """
+    Clean up orphaned test resources from previous interrupted runs.
+    
+    Runs once at session start before any tests. Cleans in correct order:
+    1. Manifests first (while repos still exist, can validate health)
+    2. Then deployment-configurations repos
+    
+    This prevents the issue where:
+    - Old repos get deleted first
+    - Then manifests referencing deleted repos can't become healthy
+    - Pre-cleanup gets stuck waiting for health
+    
+    Scope: session (runs once at start)
+    Autouse: True (always runs)
+    """
+    logger.info("\n" + "="*70)
+    logger.info("SESSION CLEANUP: Removing orphaned resources from previous runs")
+    logger.info("="*70)
+    
+    # Extract namespace from captain domain
+    namespace_name = extract_namespace_from_captain_domain(captain_domain)
+    
+    # Connect to captain repo
+    g, captain_repo = get_captain_repo(
+        token=captain_domain_github_token,
+        repo_url=captain_domain_repo_url
+    )
+    
+    # Define manifest paths
+    manifest_paths = {
+        'namespace': 'manifests/namespace.yaml',
+        'appproject': 'manifests/appproject.yaml',
+        'appset': 'manifests/appset.yaml',
+        'pullrequest_appset': 'manifests/pullrequest-appset.yaml',
+    }
+    
+    # Step 1: Clean up orphaned manifests FIRST (repos still exist)
+    logger.info("\n1️⃣  Cleaning up orphaned captain manifests...")
+    try:
+        _cleanup_manifests(
+            captain_repo=captain_repo,
+            manifest_paths=manifest_paths,
+            namespace_name=namespace_name,
+            custom_api=custom_api
+        )
+        logger.info("   ✓ Orphaned manifests cleaned")
+    except Exception as e:
+        logger.warning(f"   ⚠ Error cleaning manifests (may not exist): {e}")
+    
+    # Step 2: NOW clean up orphaned repos (manifests already gone)
+    logger.info("\n2️⃣  Cleaning up orphaned test repositories...")
+    try:
+        # Get GitHub client to access tenant org
+        import os
+        from github import Github
+        github_token = os.environ.get("GITHUB_TOKEN")
+        if github_token:
+            g = Github(github_token)
+            dest_owner = g.get_organization(tenant_github_org) if tenant_github_org else g.get_user()
+            delete_repos_by_topic(dest_owner, 'createdby-automated-test-delete-me')
+            logger.info("   ✓ Orphaned repositories cleaned")
+        else:
+            logger.warning("   ⚠ GITHUB_TOKEN not set, skipping repo cleanup")
+    except Exception as e:
+        logger.warning(f"   ⚠ Error cleaning repos (may not exist): {e}")
+    
+    logger.info("\n✓ Session cleanup complete")
+    logger.info("="*70 + "\n")
+    
+    yield
 
 
 # =============================================================================
@@ -96,6 +182,8 @@ deployment:
 ingress:
   enabled: true
   ingressClassName: public
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
   entries:
     - name: public
       hosts:
@@ -195,7 +283,7 @@ def _cleanup_manifests(
     """
     Clean up captain manifests in the correct order.
     
-    Order: ApplicationSet → wait for apps deleted → AppProject → Namespace
+    Order: ApplicationSets → wait for apps deleted → AppProject → Namespace
     
     Args:
         captain_repo: GitHub repository object for captain domain
@@ -204,13 +292,29 @@ def _cleanup_manifests(
         custom_api: Kubernetes CustomObjectsApi client
     """
     try:
-        # Step 1: Delete ApplicationSet first
-        logger.info("\n🗑️  Step 1: Deleting ApplicationSet...")
-        delete_file_if_exists(
+        # Step 1: Delete ApplicationSets first
+        logger.info("\n🗑️  Step 1: Deleting ApplicationSets...")
+        commit_sha = delete_file_if_exists(
             captain_repo,
             manifest_paths['appset'],
             f"Teardown: remove ApplicationSet for {namespace_name}"
         )
+        if commit_sha:
+            refresh_and_wait_for_argocd_app(
+                custom_api, app_name="captain-manifests", 
+                namespace="glueops-core", expected_sha=commit_sha
+            )
+        
+        commit_sha = delete_file_if_exists(
+            captain_repo,
+            manifest_paths['pullrequest_appset'],
+            f"Teardown: remove pull request ApplicationSet for {namespace_name}"
+        )
+        if commit_sha:
+            refresh_and_wait_for_argocd_app(
+                custom_api, app_name="captain-manifests",
+                namespace="glueops-core", expected_sha=commit_sha
+            )
         
         # Step 2: Wait for ArgoCD applications to be deleted
         logger.info("\n⏳ Step 2: Waiting for ArgoCD applications to be deleted...")
@@ -234,39 +338,50 @@ def _cleanup_manifests(
         
         # Step 3: Delete AppProject
         logger.info("\n🗑️  Step 3: Deleting AppProject...")
-        delete_file_if_exists(
+        commit_sha = delete_file_if_exists(
             captain_repo,
             manifest_paths['appproject'],
             f"Teardown: remove AppProject for {namespace_name}"
         )
+        if commit_sha:
+            refresh_and_wait_for_argocd_app(
+                custom_api, app_name="captain-manifests",
+                namespace="glueops-core", expected_sha=commit_sha
+            )
         
         # Step 4: Delete Namespace
         logger.info("\n🗑️  Step 4: Deleting Namespace...")
-        delete_file_if_exists(
+        commit_sha = delete_file_if_exists(
             captain_repo,
             manifest_paths['namespace'],
             f"Teardown: remove Namespace for {namespace_name}"
         )
+        if commit_sha:
+            refresh_and_wait_for_argocd_app(
+                custom_api, app_name="captain-manifests",
+                namespace="glueops-core", expected_sha=commit_sha
+            )
         
-        # Step 5: Force sync captain-manifests app
-        logger.info("\n🔄 Step 5: Force syncing captain-manifests app...")
-        force_sync_argocd_app(
-            custom_api,
-            app_name="captain-manifests",
-            namespace="glueops-core",
-        )
+        # Step 5: Final health check for captain-manifests
+        logger.info("\n🔄 Step 5: Verifying captain-manifests is healthy...")
+        latest_sha = get_repo_latest_sha(captain_repo)
         
-        # Give ArgoCD time to process the sync
-        logger.info("\n⏱️  Waiting 30s for sync to stabilize...")
-        time.sleep(30)
-        
-        # Step 6: Wait for captain-manifests app to become healthy
-        logger.info("\n⏳ Step 6: Waiting for captain-manifests to stabilize...")
-        app_healthy = wait_for_argocd_app_healthy(
-            custom_api,
-            app_name="captain-manifests",
-            namespace="glueops-core",
-        )
+        if latest_sha:
+            # Verify sync to latest commit
+            app_healthy = refresh_and_wait_for_argocd_app(
+                custom_api,
+                app_name="captain-manifests",
+                namespace="glueops-core",
+                expected_sha=latest_sha
+            )
+        else:
+            # Fallback: just wait for healthy status without SHA validation
+            logger.warning("Could not get latest SHA, falling back to health check only")
+            app_healthy = wait_for_argocd_app_healthy(
+                custom_api,
+                app_name="captain-manifests",
+                namespace="glueops-core",
+            )
         
         if not app_healthy:
             logger.warning("⚠ captain-manifests app did not become healthy within timeout")
@@ -392,6 +507,7 @@ def captain_manifests(
         'namespace': 'manifests/namespace.yaml',
         'appproject': 'manifests/appproject.yaml',
         'appset': 'manifests/appset.yaml',
+        'pullrequest_appset': 'manifests/pullrequest-appset.yaml',
     }
     
     # Pre-cleanup: Delete existing manifests in reverse order of creation
@@ -445,6 +561,12 @@ def captain_manifests(
         deployment_config_repo=ephemeral_github_repo.name,
         captain_domain=captain_domain
     )
+    pullrequest_appset_yaml = generate_pullrequest_appset_yaml(
+        namespace_name=namespace_name,
+        tenant_github_org=tenant_github_org,
+        deployment_config_repo=ephemeral_github_repo.name,
+        captain_domain=captain_domain
+    )
     
     # Commit manifests to captain repo
     logger.info("\n📤 Committing manifests to captain repo...")
@@ -470,10 +592,18 @@ def captain_manifests(
         f"Create ApplicationSet manifest for {namespace_name}"
     )
     
+    pullrequest_appset_result = create_or_update_file(
+        captain_repo,
+        manifest_paths['pullrequest_appset'],
+        pullrequest_appset_yaml,
+        f"Create pull request ApplicationSet manifest for {namespace_name}"
+    )
+    
     logger.info(f"\n✓ All manifests committed successfully:")
-    logger.info(f"  Namespace:   {namespace_result['commit'].sha[:8]}")
-    logger.info(f"  AppProject:  {appproject_result['commit'].sha[:8]}")
-    logger.info(f"  AppSet:      {appset_result['commit'].sha[:8]}")
+    logger.info(f"  Namespace:        {namespace_result['commit'].sha[:8]}")
+    logger.info(f"  AppProject:       {appproject_result['commit'].sha[:8]}")
+    logger.info(f"  AppSet:           {appset_result['commit'].sha[:8]}")
+    logger.info(f"  PR AppSet:        {pullrequest_appset_result['commit'].sha[:8]}")
     
     # Wait for captain-manifests ArgoCD Application to become healthy
     logger.info("")

@@ -294,8 +294,8 @@ def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core"):
     """
     Force sync an ArgoCD application if not already syncing.
     
-    First ensures the app allows empty sync, waits for stabilization,
-    then checks if an operation is running before triggering sync.
+    First ensures the app allows empty sync, then checks if an operation 
+    is running before triggering sync.
     
     Args:
         custom_api: Kubernetes CustomObjectsApi client
@@ -311,11 +311,7 @@ def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core"):
         # Step 1: Ensure app allows empty sync (prevents "wipe out all resources" error)
         ensure_argocd_app_allows_empty(custom_api, app_name, namespace)
         
-        # Step 2: Wait for the patch to take effect and ArgoCD to react
-        logger.info(f"  Waiting 30s for sync policy changes to take effect...")
-        time.sleep(30)
-        
-        # Step 3: Check if an operation is already running
+        # Step 2: Check if an operation is already running
         app = custom_api.get_namespaced_custom_object(
             group="argoproj.io",
             version="v1alpha1",
@@ -331,7 +327,7 @@ def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core"):
             logger.info(f"  ⚙️  Operation already {phase.lower()}, not triggering new sync")
             return True
         
-        # Step 4: Trigger a refresh to ensure ArgoCD has latest repo state
+        # Step 3: Trigger a refresh to ensure ArgoCD has latest repo state
         refresh_patch = {
             "metadata": {
                 "annotations": {
@@ -351,9 +347,7 @@ def force_sync_argocd_app(custom_api, app_name, namespace="glueops-core"):
         
         logger.info(f"  Triggered refresh for '{app_name}'")
         
-        time.sleep(5)
-        
-        # Step 5: Force sync with prune enabled
+        # Step 4: Force sync with prune enabled
         sync_patch = {
             "operation": {
                 "initiatedBy": {

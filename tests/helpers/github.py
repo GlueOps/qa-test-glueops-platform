@@ -122,9 +122,37 @@ def get_github_client(token: str) -> Github:
     return Github(auth=auth)
 
 
+def get_repo_latest_sha(repo, branch: str = "main") -> Optional[str]:
+    """
+    Get the latest commit SHA from a repository branch.
+    
+    Args:
+        repo: GitHub Repository object
+        branch: Branch name to get the latest commit from (default: main)
+        
+    Returns:
+        str: The latest commit SHA, or None if error
+        
+    Example:
+        sha = get_repo_latest_sha(captain_repo)
+        # Use this SHA for ArgoCD sync validation
+    """
+    try:
+        branch_ref = repo.get_branch(branch)
+        sha = branch_ref.commit.sha
+        logger.info(f"✓ Latest commit on {repo.full_name}/{branch}: {sha[:8]}")
+        return sha
+    except GithubException as e:
+        logger.error(f"❌ Failed to get latest SHA from {repo.full_name}/{branch}: {e}")
+        return None
+
+
 def create_repo(org, repo_name: str, description: str = "Test repository", private: bool = False):
     """
-    Create a new GitHub repository in an organization.
+    Create a new GitHub repository in an organization with automatic cleanup topic.
+    
+    This function automatically sets the 'createdby-automated-test-delete-me' topic
+    on ALL created repositories to ensure they are cleaned up by orphan cleanup fixtures.
     
     Args:
         org: GitHub Organization object
@@ -133,7 +161,11 @@ def create_repo(org, repo_name: str, description: str = "Test repository", priva
         private: Whether the repo should be private (default: False)
         
     Returns:
-        github.Repository.Repository: The created repository
+        github.Repository.Repository: The created repository with cleanup topic set
+        
+    Note:
+        ALL repositories created with this function will be tagged for automatic cleanup.
+        The 'createdby-automated-test-delete-me' topic is MANDATORY and hardcoded.
     """
     logger.info(f"Creating repository: {repo_name} (private={private})")
     
@@ -147,6 +179,19 @@ def create_repo(org, repo_name: str, description: str = "Test repository", priva
     time.sleep(2)
     
     logger.info(f"✓ Repository created: {new_repo.html_url}")
+    
+    # MANDATORY: Set cleanup topic on ALL repos created by tests
+    logger.info("🏷️  Setting mandatory cleanup topic...")
+    try:
+        # Get GitHub client from the org object
+        from github import Github, Auth
+        # The org object has a _requester which has the auth token
+        g = Github(auth=Auth.Token(org._requester.auth.token if hasattr(org._requester.auth, 'token') else org._requester._Requester__authorizationHeader.split()[-1]))
+        set_repo_topics(g, new_repo, ['createdby-automated-test-delete-me'])
+        logger.info("✓ Cleanup topic set successfully")
+    except Exception as e:
+        logger.warning(f"⚠️  Failed to set cleanup topic (repo will need manual cleanup): {e}")
+        # Don't fail the test - just warn
     
     return new_repo
 
@@ -838,3 +883,90 @@ def count_apps_in_repo(repo, apps_path='apps'):
     except Exception as e:
         logger.warning(f"Could not count apps in '{apps_path}': {e}")
         return 0
+
+
+def create_multiple_files(repo, files: list, commit_message: str, branch: str = "main", skip_ci: bool = True):
+    """
+    Create multiple files in a single commit using the Git Data API.
+    
+    This is more efficient than creating files one at a time when you need
+    to add several files together (e.g., Dockerfile + workflow).
+    
+    Args:
+        repo: GitHub Repository object
+        files: List of dicts with 'path' and 'content' keys
+               Example: [{'path': 'Dockerfile', 'content': 'FROM alpine'}]
+        commit_message: Git commit message
+        branch: Target branch (default: main)
+        skip_ci: Whether to add [skip ci] to commit message (default: True)
+        
+    Returns:
+        str: Commit SHA of the new commit
+        
+    Example:
+        files = [
+            {'path': 'Dockerfile', 'content': 'FROM alpine:latest'},
+            {'path': '.github/workflows/build.yaml', 'content': workflow_yaml}
+        ]
+        sha = create_multiple_files(repo, files, "Add container build setup")
+    """
+    import base64
+    
+    ci_suffix = " [skip ci]" if skip_ci else ""
+    full_message = f"{commit_message}{ci_suffix}"
+    
+    logger.info(f"Creating {len(files)} files in single commit on branch '{branch}'")
+    for f in files:
+        logger.info(f"  📄 {f['path']}")
+    
+    # Get the current commit SHA for the branch
+    branch_ref = repo.get_branch(branch)
+    base_tree_sha = branch_ref.commit.commit.tree.sha
+    base_commit_sha = branch_ref.commit.sha
+    
+    # Create tree elements for each file
+    tree_elements = []
+    for file_info in files:
+        # Create a blob for the file content
+        blob = repo.create_git_blob(
+            content=base64.b64encode(file_info['content'].encode('utf-8')).decode('utf-8'),
+            encoding='base64'
+        )
+        
+        tree_elements.append({
+            'path': file_info['path'],
+            'mode': '100644',  # Regular file
+            'type': 'blob',
+            'sha': blob.sha
+        })
+    
+    # Create a new tree with the files
+    from github import InputGitTreeElement
+    input_tree_elements = [
+        InputGitTreeElement(
+            path=elem['path'],
+            mode=elem['mode'],
+            type=elem['type'],
+            sha=elem['sha']
+        )
+        for elem in tree_elements
+    ]
+    
+    new_tree = repo.create_git_tree(input_tree_elements, base_tree=repo.get_git_tree(base_tree_sha))
+    
+    # Create the commit
+    new_commit = repo.create_git_commit(
+        message=full_message,
+        tree=new_tree,
+        parents=[repo.get_git_commit(base_commit_sha)]
+    )
+    
+    # Update the branch reference to point to the new commit
+    ref = repo.get_git_ref(f"heads/{branch}")
+    ref.edit(sha=new_commit.sha)
+    
+    logger.info(f"✓ Created commit with {len(files)} files")
+    logger.info(f"  Full SHA: {new_commit.sha}")
+    logger.info(f"  Short SHA: {new_commit.sha[:8]}")
+    
+    return new_commit.sha
