@@ -7,7 +7,6 @@ and validates the secrets are synced as environment variables.
 """
 import pytest
 import uuid
-import logging
 import random
 import string
 from tests.helpers.assertions import (
@@ -20,11 +19,6 @@ from tests.helpers.k8s import validate_whoami_env_vars
 from tests.helpers.github import create_github_file
 from tests.helpers.argocd import wait_for_appset_apps_created_and_healthy, calculate_expected_app_count
 from tests.helpers.utils import print_section_header, print_summary_list
-from tests.helpers.vault import (
-    create_multiple_vault_secrets
-)
-
-logger = logging.getLogger(__name__)
 
 
 def generate_random_secrets(num_keys=5):
@@ -40,7 +34,8 @@ def generate_random_secrets(num_keys=5):
 @pytest.mark.gitops
 @pytest.mark.externalsecrets
 @pytest.mark.captain_manifests
-def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
+@pytest.mark.vault
+def test_externalsecrets_vault_integration(vault_test_secrets, captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
     """
     Test External Secrets Operator integration with Vault.
     
@@ -57,19 +52,14 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
     
     Applications use pattern: externalsecret-test-<guid>.apps.{captain_domain}
     Vault paths: secret/<app-name>/prod and secret/<app-name>/extra
+    
+    Uses vault_test_secrets fixture which handles cleanup before and after test.
     """
     captain_domain = captain_manifests['captain_domain']
     repo = ephemeral_github_repo
-    vault_secret_paths = []
-    
-    logger.info(f"✓ Captain domain: {captain_domain}")
-    
-    # Use vault_client fixture (already connected)
-    print_section_header("STEP 1: Using Vault Connection")
-    logger.info(f"  ✓ Vault client ready (via fixture)\n")
     
     # Generate applications and vault secrets
-    print_section_header("STEP 2: Creating Vault Secrets")
+    print_section_header("STEP 1: Creating Vault Secrets")
     
     num_apps = 3
     app_info = []
@@ -88,9 +78,6 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
         # Vault paths
         app_secret_path = f"{app_name}/prod"
         extra_secret_path = f"{app_name}/extra"
-        
-        # Track for cleanup
-        vault_secret_paths.extend([app_secret_path, extra_secret_path])
         
         # Prepare vault secret configurations
         vault_secrets_config.extend([
@@ -114,23 +101,15 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
             'app_secret_path': app_secret_path,
             'extra_secret_path': extra_secret_path
         })
-        
-        logger.info(f"\n[{i}/{num_apps}] {app_name}")
-        logger.info(f"      Hostname: {hostname}")
     
-    # Create secrets in Vault
-    created_paths, create_failures = create_multiple_vault_secrets(
-        vault_client,
-        vault_secrets_config
-    )
+    # Create secrets in Vault using the manager
+    created_paths, create_failures = vault_test_secrets.create_secrets(vault_secrets_config)
     
     if create_failures:
-        failure_msg = f"Failed to create {len(create_failures)} vault secret(s): {create_failures}"
-        logger.error(failure_msg)
-        pytest.fail(failure_msg)
+        pytest.fail(f"Failed to create {len(create_failures)} vault secret(s): {create_failures}")
     
     # Create applications in GitHub
-    print_section_header("STEP 3: Creating Applications in GitHub")
+    print_section_header("STEP 2: Creating Applications in GitHub")
     
     from tests.templates import load_template
     
@@ -157,7 +136,6 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
     
     # Wait for ApplicationSet to discover and sync the apps we just created
     expected_total = calculate_expected_app_count(captain_manifests, num_apps)
-    logger.info(f"\n⏳ Waiting for ApplicationSet to sync {num_apps} test-specific app(s) (total: {expected_total})...")
     apps_ready = wait_for_appset_apps_created_and_healthy(
         custom_api,
         namespace=captain_manifests['namespace'],
@@ -168,39 +146,37 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
         pytest.fail(f"ApplicationSet did not create/sync {num_apps} apps within timeout")
     
     # Check ArgoCD application health and sync status
-    print_section_header("STEP 4: Checking ArgoCD Application Status")
+    print_section_header("STEP 3: Checking ArgoCD Application Status")
     
     assert_argocd_healthy(custom_api, namespace_filter=None)
     
     # Check pod health across all platform namespaces
-    print_section_header("STEP 5: Checking Pod Health")
+    print_section_header("STEP 4: Checking Pod Health")
     
     assert_pods_healthy(core_v1, platform_namespaces)
     
     # Validate Ingress configuration
-    print_section_header("STEP 6: Validating Ingress Configuration")
+    print_section_header("STEP 5: Validating Ingress Configuration")
     
-    total_ingresses = assert_ingress_valid(networking_v1, platform_namespaces)
+    assert_ingress_valid(networking_v1, platform_namespaces)
     
     # Validate DNS resolution for Ingress hosts
-    print_section_header("STEP 7: Validating Ingress DNS Resolution")
+    print_section_header("STEP 6: Validating Ingress DNS Resolution")
     
-    checked_count = assert_ingress_dns_valid(
+    assert_ingress_dns_valid(
         networking_v1,
         platform_namespaces,
         dns_server='1.1.1.1'
     )
     
     # Validate environment variables from Vault
-    print_section_header("STEP 8: Validating Environment Variables from Vault")
+    print_section_header("STEP 7: Validating Environment Variables from Vault")
     
     validation_errors = []
     
     for idx, app in enumerate(app_info, 1):
         app_name = app['name']
         url = app['url']
-        
-        logger.info(f"[{idx}/{len(app_info)}] {app_name}")
         
         # Combine all expected environment variables (spot check 3 from each)
         expected_env_vars = {}
@@ -224,19 +200,9 @@ def test_externalsecrets_vault_integration(vault_client, captain_manifests, ephe
         
         if problems:
             validation_errors.extend(problems)
-        
-        logger.info("")
     
     # Assert no validation errors occurred
-    print_section_header("FINAL SUMMARY")
-    
     if validation_errors:
-        for error in validation_errors:
-            logger.info(f"   • {error}")
-        pytest.fail(f"\n❌ Test failed with {len(validation_errors)} error(s)")
-    
-    logger.info(f"\n✅ SUCCESS: External Secrets integration validated")
-    logger.info(f"   ✓ {len(vault_secrets_config)} Vault secrets created")
-    logger.info(f"   ✓ {len(app_info)} applications deployed")
-    logger.info(f"   ✓ All validations passed\n")
+        pytest.fail(f"External Secrets validation failed with {len(validation_errors)} error(s):\n" +
+                   "\n".join(f"  - {e}" for e in validation_errors))
     

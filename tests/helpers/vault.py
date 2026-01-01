@@ -344,3 +344,129 @@ def verify_vault_secrets(client, paths, mount_point='secret', sample_size=None):
         logger.info(f"  ✗ Failed to verify {len(failures)} secrets")
     
     return failures
+
+
+# =============================================================================
+# VAULT SECRET CLEANUP FUNCTIONS
+# =============================================================================
+
+# Placeholder secret that is preserved during cleanup
+PLACEHOLDER_SECRET_PATH = "place-holder-secret-for-backups"
+
+
+def list_vault_secrets(client, path='', mount_point='secret'):
+    """
+    Recursively list all secret paths under a given path in Vault KV v2.
+    
+    Args:
+        client: Authenticated hvac.Client
+        path: Starting path to list from (default: '' for root)
+        mount_point: KV mount point (default: "secret")
+    
+    Returns:
+        list: List of all secret paths (full paths, not ending in /)
+    """
+    all_paths = []
+    
+    try:
+        response = client.secrets.kv.v2.list_secrets(
+            path=path,
+            mount_point=mount_point
+        )
+        keys = response.get('data', {}).get('keys', [])
+        
+        for key in keys:
+            full_path = f"{path}{key}" if path else key
+            
+            if key.endswith('/'):
+                # It's a directory, recurse
+                subpaths = list_vault_secrets(client, full_path, mount_point)
+                all_paths.extend(subpaths)
+            else:
+                # It's a secret
+                all_paths.append(full_path)
+                
+    except Exception as e:
+        # Path may not exist or be empty, which is fine
+        if "permission denied" not in str(e).lower():
+            logger.debug(f"  Could not list path '{path}': {e}")
+    
+    return all_paths
+
+
+def ensure_placeholder_secret(client, mount_point='secret'):
+    """
+    Create or update the placeholder secret with a lastupdated timestamp.
+    
+    This secret is preserved during cleanup and ensures backups always have
+    at least one secret to back up.
+    
+    Args:
+        client: Authenticated hvac.Client
+        mount_point: KV mount point (default: "secret")
+    
+    Returns:
+        dict: Response from Vault API
+    """
+    from datetime import datetime, timezone
+    
+    timestamp = datetime.now(timezone.utc).isoformat()
+    
+    logger.info(f"  📝 Ensuring placeholder secret exists: {PLACEHOLDER_SECRET_PATH}")
+    
+    response = create_vault_secret(
+        client,
+        path=PLACEHOLDER_SECRET_PATH,
+        data={"lastupdated": timestamp},
+        mount_point=mount_point
+    )
+    
+    logger.info(f"  ✓ Placeholder secret updated with timestamp: {timestamp}")
+    
+    return response
+
+
+def cleanup_all_vault_secrets(client, mount_point='secret'):
+    """
+    Delete all secrets from Vault KV v2 mount except the placeholder secret.
+    
+    This function lists all secrets, filters out the placeholder, and deletes
+    the rest. Raises an exception if any deletion fails.
+    
+    Args:
+        client: Authenticated hvac.Client
+        mount_point: KV mount point (default: "secret")
+    
+    Raises:
+        RuntimeError: If any secret deletion fails
+    """
+    logger.info(f"\n🧹 Cleaning up all Vault secrets (mount: {mount_point})...")
+    
+    # List all secrets
+    all_paths = list_vault_secrets(client, path='', mount_point=mount_point)
+    
+    if not all_paths:
+        logger.info(f"  ✓ No secrets found to clean up")
+        return
+    
+    # Filter out the placeholder secret
+    paths_to_delete = [p for p in all_paths if p != PLACEHOLDER_SECRET_PATH]
+    
+    if not paths_to_delete:
+        logger.info(f"  ✓ No secrets to clean up (only placeholder exists)")
+        return
+    
+    logger.info(f"  Found {len(all_paths)} secret(s), deleting {len(paths_to_delete)} (preserving {PLACEHOLDER_SECRET_PATH})")
+    
+    # Delete secrets
+    deleted_paths, failures = delete_multiple_vault_secrets(client, paths_to_delete, mount_point)
+    
+    if failures:
+        error_msg = (
+            f"Failed to delete {len(failures)} Vault secret(s):\n" +
+            "\n".join(f"  - {f}" for f in failures)
+        )
+        logger.error(f"  ✗ {error_msg}")
+        raise RuntimeError(error_msg)
+    
+    logger.info(f"  ✓ Successfully deleted {len(deleted_paths)} secret(s)\n")

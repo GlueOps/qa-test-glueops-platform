@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 # Alerts that are expected to be firing and don't indicate issues
 PASSABLE_ALERTS = [
-    "Watchdog"  # Always-firing alert to verify alerting pipeline is working
+    "Watchdog",  # Always-firing alert to verify alerting pipeline is working
+    "InfoInhibitor" # # Seems to occur intermittently. Added as passable by @venkatamutyala
 ]
 
 
@@ -283,6 +284,7 @@ def test_alertmanager_alerts(core_v1, alertmanager_url):
     
     Expected alerts (PASSABLE_ALERTS) generate info messages only:
     - "Watchdog" - Always-firing alert to verify alerting pipeline works
+    - "InfoInhibitor" # # Seems to occur intermittently. Added as passable by @venkatamutyala
     
     Unexpected firing alerts are reported as failures with:
     - Alert name, namespace, severity

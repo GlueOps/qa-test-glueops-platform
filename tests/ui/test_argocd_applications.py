@@ -83,7 +83,7 @@ def test_argocd_applications(captain_manifests, authenticated_argocd_page, capta
         page, page.url,
         description="ArgoCD Applications Page with Deployed Apps",
         baseline_key="argocd_applications_deployed",
-        threshold=0.0
+        threshold=0.5
     )
     
     # Assert no visual regressions

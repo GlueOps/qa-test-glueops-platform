@@ -563,7 +563,8 @@ pytest -x -v
 Some alerts are expected to always fire (e.g., Watchdog for pipeline validation):
 ```python
 PASSABLE_ALERTS = [
-    "Watchdog"  # Always-firing alert to verify alerting pipeline
+    "Watchdog",  # Always-firing alert to verify alerting pipeline
+    "InfoInhibitor" # Seems to occur intermittently. Added as passable by @venkatamutyala
 ]
 ```
 

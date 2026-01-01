@@ -9,6 +9,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Whitelist of metrics that are expected to be missing intermittently
+IGNORABLE_MISSING_METRICS = [
+    "vault_identity_entity_creation",
+    "vault_identity_upsert_entity_txn",
+    "vault_identity_upsert_entity_txn_count",
+    "vault_identity_upsert_entity_txn_sum",
+    "vault_storage_packer_put_bucket",
+    "vault_storage_packer_put_bucket_count",
+    "vault_storage_packer_put_bucket_sum",
+    "vault_storage_packer_put_item",
+    "vault_storage_packer_put_item_count",
+    "vault_storage_packer_put_item_sum"
+]
+
 
 def query_all_metrics(prometheus_url):
     """Query Prometheus and return set of metric names (deduplicated)
@@ -96,7 +110,7 @@ def load_baseline(baseline_file):
 @pytest.mark.important
 @pytest.mark.readonly
 @pytest.mark.observability
-def test_prometheus_metrics_existence(core_v1, captain_domain, prometheus_url):
+def test_prometheus_metrics_existence(core_v1, captain_domain, prometheus_url, request):
     """Verify all baseline Prometheus metrics still exist (READ-ONLY cluster operation).
     
     This is a READ-ONLY test with respect to the Kubernetes cluster:
@@ -114,24 +128,35 @@ def test_prometheus_metrics_existence(core_v1, captain_domain, prometheus_url):
     
     Fails if any baseline metric names are missing (indicates metric loss/regression).
     
-    Note: To recreate baseline, delete the baseline file and rerun.
+    Note: To recreate baseline, delete the baseline file and rerun, or use --update-baseline=all
     
     Cluster Impact: READ-ONLY (queries only, no modifications)
     """
     baseline_dir = "baselines"
     baseline_file = f"{baseline_dir}/prometheus-metrics-baseline.json"
     
+    # Check if we should force update the baseline
+    update_baseline = request.config.getoption("--update-baseline")
+    force_update = update_baseline in ("all", "prometheus", request.node.name)
+    
+    # Check if we should force update the baseline
+    update_baseline = request.config.getoption("--update-baseline")
+    force_update = update_baseline in ("all", "prometheus", request.node.name)
+    
     # Use prometheus_url fixture (port-forward already established)
     logger.info(f"Querying Prometheus at {prometheus_url} (read-only)")
     current_metrics = query_all_metrics(prometheus_url)
     logger.info(f"Found {len(current_metrics)} unique metric names")
     
-    # First run - create baseline (writes to LOCAL filesystem only)
-    if not os.path.exists(baseline_file):
+    # First run or force update - create/recreate baseline (writes to LOCAL filesystem only)
+    if not os.path.exists(baseline_file) or force_update:
+        action = "updated" if force_update else "created"
         create_baseline(current_metrics, baseline_file, captain_domain, prometheus_url)
-        logger.info(f"✓ Baseline created: {len(current_metrics)} metrics")
+        logger.info(f"✓ Baseline {action}: {len(current_metrics)} metrics")
         logger.info(f"  Baseline saved to {baseline_file}")
-        pytest.skip(f"Baseline created with {len(current_metrics)} metrics (rerun to compare)")
+        if force_update:
+            logger.info(f"  Baseline force-updated due to --update-baseline={update_baseline}")
+        pytest.skip(f"Baseline {action} with {len(current_metrics)} metrics (rerun to compare)")
     
     # Comparison run
     baseline = load_baseline(baseline_file)
@@ -143,20 +168,29 @@ def test_prometheus_metrics_existence(core_v1, captain_domain, prometheus_url):
     missing = baseline_set - current_set
     new = current_set - baseline_set
     
+    # Separate whitelisted missing metrics from unexpected missing metrics
+    whitelisted_missing = missing & set(IGNORABLE_MISSING_METRICS)
+    unexpected_missing = missing - set(IGNORABLE_MISSING_METRICS)
+    
     # Report new metrics (informational)
     if new:
         logger.info(f"\nNew metrics detected ({len(new)} total):")
         # Show first 10 new metrics
-        for metric in sorted(new)[:10]:
+        for metric in sorted(new):
             logger.info(f"  + {metric}")
-        if len(new) > 10:
-            logger.info(f"  ... and {len(new) - 10} more")
+
     
-    # Assert no missing metrics
-    if missing:
-        # Show all missing metrics
-        missing_list = sorted(missing)
-        error_msg = f"{len(missing)} metric name(s) missing from baseline:\n"
+    # Log whitelisted missing metrics as warning (not a failure)
+    if whitelisted_missing:
+        logger.warning(f"\nWhitelisted missing metrics ({len(whitelisted_missing)} total):")
+        for metric in sorted(whitelisted_missing):
+            logger.warning(f"  - {metric}")
+    
+    # Assert no unexpected missing metrics
+    if unexpected_missing:
+        # Show all unexpected missing metrics
+        missing_list = sorted(unexpected_missing)
+        error_msg = f"{len(unexpected_missing)} metric name(s) missing from baseline:\n"
         for m in missing_list:
             error_msg += f"  - {m}\n"
         

@@ -1,6 +1,5 @@
-.PHONY: help test build clean clean-reports clean-baselines allure-report allure-single-file allure-serve upload-results discover markers fixtures \
-        check-env setup-kubeconfig setup-allure setup-docker-base lint typecheck ci list-tests list-files \
-        quick api ui gitops gitops-deployment externalsecrets letsencrypt preview-environments full
+.PHONY: help test build clean clean-reports clean-baselines report discover markers fixtures \
+        check-env setup-kubeconfig setup-allure setup-docker-base lint typecheck ci list-tests list-files
 
 # Docker run base configuration
 DOCKER_RUN = docker run --rm -it --network host
@@ -21,66 +20,49 @@ CAPTAIN_DOMAIN = $$(grep '^CAPTAIN_DOMAIN=' .env 2>/dev/null | cut -d'=' -f2 || 
 # Timestamp for unique report names
 REPORT_TIMESTAMP = $$(date +%Y%m%d-%H%M%S)
 
-# Test configuration variables
-MARKER ?=
-RERUNS ?=
-SUITE ?= test
-
-# Capture test paths/args (exclude known make targets)
-ARGS ?= $(filter-out test,$(MAKECMDGOALS))
-
-# Common pytest flags
-PYTEST_COMMON_FLAGS =
+# Capture all args for pytest passthrough (everything except 'test')
+# Usage: make test PYTEST_ARGS="-m quick tests/smoke/"
+#        make test PYTEST_ARGS="-m observability"
+#        make test PYTEST_ARGS="--update-baseline=all tests/smoke/"
+# For passing args directly: make test tests/path (no flags starting with -)
+PYTEST_ARGS ?=
+# If PYTEST_ARGS not set via variable, try to capture from MAKECMDGOALS
+ifeq ($(PYTEST_ARGS),)
+PYTEST_ARGS = $(filter-out test,$(MAKECMDGOALS))
+endif
+PYTEST_FLAGS ?=
+ALL_PYTEST_ARGS = $(PYTEST_FLAGS) $(PYTEST_ARGS)
 
 help:
 	@echo "GlueOps Test Suite (Pytest + Allure)"
 	@echo ""
-	@echo "Quick Commands (shortcuts):"
-	@echo "  make quick                - Run quick tests (<5s)"
-	@echo "  make api                  - Run API/K8s tests (smoke + write)"
-	@echo "  make ui                   - Run UI tests with retries"
-	@echo "  make gitops               - Run GitOps tests with retries"
-	@echo "  make gitops-deployment    - Run GitOps deployment workflow test"
-	@echo "  make letsencrypt          - Run LetsEncrypt certificate tests"
-	@echo "  make preview-environments - Run preview environment PR workflow tests"
-	@echo "  make full                 - Run full suite with retries"
+	@echo "Test Commands:"
+	@echo "  make test                                               - Run all tests"
+	@echo "  make test PYTEST_ARGS='-m <MARKER-NAME-HERE>'           - Run test by marker name"
+	@echo "  make test PYTEST_ARGS='--update-baseline=all -m ui'     - Update baselines and run UI tests"
+	@echo "  make test PYTEST_ARGS='tests/smoke/test_argocd.py'      - Run specific file"
+	@echo "  make test PYTEST_ARGS='-m quick tests/smoke/'           - Combine marker + path"
 	@echo ""
-	@echo "Advanced Usage (unified command):"
-	@echo "  make test                                - Run all tests"
-	@echo "  make test MARKER=quick                   - Run quick tests"
-	@echo "  make test MARKER=gitops RERUNS=0         - Run gitops with retries"
-	@echo "  make test MARKER='smoke or write'        - Run API/K8s tests"
-	@echo "  make test tests/smoke/test_argocd.py     - Run specific file"
-	@echo "  make test MARKER=quick tests/smoke/      - Combine marker + path"
-	@echo "  make test SUITE=mytest MARKER=smoke      - Custom suite name"
+	@echo "Advanced: Override with PYTEST_FLAGS variable if needed:"
+	@echo "  make test PYTEST_FLAGS='--reruns 0' PYTEST_ARGS='-m ui'"
 	@echo ""
-	@echo ""
-	@echo "Allure Reports:"
-	@echo "  make allure-report      - Generate Allure HTML report from results"
-	@echo "  make allure-single-file - Generate single-file HTML report (portable)"
-	@echo "  make allure-serve       - Serve Allure report on http://localhost:5050"
-	@echo "  make upload-results     - Upload results to Allure TestOps cloud"
-	@echo "  Note: Tests generate allure-results/ data automatically"
+	@echo "Reports:"
+	@echo "  make report        - Generate single-file HTML report (portable)"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make build         - Build Docker image"
 	@echo "  make clean         - Remove test artifacts and kubeconfig"
 	@echo "  make clean-reports - Remove Allure results and reports"
-	@echo "  make clean-baselines - Remove Prometheus metrics baseline files"
-	@echo "  make discover      - List all tests with full descriptions"
+	@echo "  make clean-baselines - Remove baseline files (Prometheus + screenshots)"
 	@echo "  make list-tests    - List all runnable test paths (copy-paste ready)"
 	@echo "  make list-files    - List all test files (run entire files)"
-	@echo "  make markers       - Show available pytest markers"
-	@echo "  make fixtures      - Show available pytest fixtures"
 	@echo "  make ci            - Run all static analysis (lint + typecheck)"
-	@echo "  make typecheck     - Run mypy static type checking"
-	@echo "  make lint          - Run pylint code analysis"
 	@echo ""
 	@echo "Setup:"
 	@echo "  1. Copy .env.example to .env"
 	@echo "  2. Configure your environment variables"
-	@echo "  3. Run: make quick, make api, make ui, or make full"
-	@echo "  4. Generate report: make allure-serve"
+	@echo "  3. Run: make test PYTEST_ARGS='-m quick'"
+	@echo "  4. Generate report: make report"
 
 # Check if .env file exists and provide helpful message
 check-env:
@@ -106,50 +88,19 @@ setup-allure:
 setup-docker-base: check-env build setup-kubeconfig
 
 test: setup-docker-base setup-allure
-	@echo "Running tests with SUITE=$(SUITE)$(if $(MARKER), MARKER=$(MARKER))$(if $(RERUNS), RERUNS=$(RERUNS))..."
-	@$(DOCKER_RUN) $(DOCKER_VOLUMES) \
+	@echo "Running tests$(if $(ALL_PYTEST_ARGS), with args: $(ALL_PYTEST_ARGS))..."
+	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
 		$(ENV_FILE_FLAG) \
 		$(DOCKER_ENV) \
-		--entrypoint bash \
-		glueops-tests -ic "\
-			pytest -vv \
-				--color=no \
-				--environment \"$(CAPTAIN_DOMAIN)\" \
-				$(if $(MARKER),-m $(MARKER)) \
-				$(if $(RERUNS),--reruns $(RERUNS) --reruns-delay 5) \
-				$(ARGS) \
-				--alluredir=/app/allure-results \
-				$(PYTEST_COMMON_FLAGS)"; \
-	echo "✅ Tests complete! Generate report with: make allure-serve"
+		--entrypoint pytest \
+		glueops-tests \
+		-vv \
+		--color=no \
+		--environment "$(CAPTAIN_DOMAIN)" \
+		--alluredir=/app/allure-results \
+		$(ALL_PYTEST_ARGS)
+	@echo "✅ Tests complete! Generate report with: make report"
 	@docker exec allure-server pkill -HUP java 2>/dev/null || true
-
-# Convenience aliases (shortcuts to common test patterns)
-quick:
-	@$(MAKE) test MARKER=quick SUITE=quick
-
-api:
-	@$(MAKE) test MARKER='smoke or write' SUITE=api
-
-ui:
-	@$(MAKE) test MARKER=ui RERUNS=0 SUITE=ui
-
-gitops:
-	@$(MAKE) test MARKER=gitops RERUNS=0 SUITE=gitops
-
-gitops-deployment:
-	@$(MAKE) test MARKER=gitops_deployment RERUNS=0 SUITE=gitops-deployment
-
-externalsecrets:
-	@$(MAKE) test MARKER=externalsecrets RERUNS=0 SUITE=externalsecrets
-
-letsencrypt:
-	@$(MAKE) test MARKER=letsencrypt RERUNS=0 SUITE=letsencrypt
-
-preview-environments:
-	@$(MAKE) test MARKER=preview_environments SUITE=preview-environments
-
-full:
-	@$(MAKE) test RERUNS=0 SUITE=full
 
 # Cleanup
 clean:
@@ -161,23 +112,11 @@ clean-reports:
 	@mkdir -p allure-results allure-report
 
 clean-baselines:
-	rm -f baselines/*.json
-
-# Generate Allure HTML report from test results
-allure-report: setup-allure
-	@echo "Generating Allure HTML report..."
-	@sudo chmod -R 777 allure-report
-	@docker run --rm \
-		-v "$$(pwd)/allure-results:/allure-results:ro" \
-		-v "$$(pwd)/allure-report:/allure-report" \
-		frankescobar/allure-docker-service \
-		allure generate /allure-results -o /allure-report --clean
-	@echo "✅ Report generated at: allure-report/index.html"
-	@echo "   Open with: open allure-report/index.html (macOS) or xdg-open allure-report/index.html (Linux)"
+	rm -f baselines/*.json baselines/**/*.png
 
 # Generate portable single-file HTML report
-allure-single-file: setup-allure
-	@echo "Generating single-file Allure report..."
+report: setup-allure
+	@echo "Generating single-file HTML report..."
 	@mkdir -p allure-single-file
 	@sudo chmod -R 777 allure-single-file
 	@docker run --rm \
@@ -187,41 +126,6 @@ allure-single-file: setup-allure
 		allure generate /allure-results -o /allure-single-file --single-file --clean
 	@echo "✅ Single-file report generated at: allure-single-file/index.html"
 	@echo "   This file can be shared and opened directly in any browser"
-
-# Generate and serve Allure report on http://localhost:5050
-allure-serve: setup-allure
-	@echo "Generating and serving Allure report..."
-	@echo "📊 Allure report will be available at:"
-	@echo "   http://localhost:5050/allure-docker-service/projects/default/reports/latest/index.html"
-	@echo ""
-	@echo "Press Ctrl+C to stop the server"
-	@echo ""
-	@sudo chmod -R 777 allure-results
-	@docker rm -f allure-server 2>/dev/null || true
-	@docker run --rm --init --name allure-server -p 5050:5050 \
-		-e CHECK_RESULTS_EVERY_SECONDS=3 \
-		-e KEEP_HISTORY=1 \
-		-v "$$(pwd)/allure-results:/app/allure-results" \
-		frankescobar/allure-docker-service || docker rm -f allure-server 2>/dev/null
-
-# Upload results to Allure TestOps cloud
-upload-results:
-	@set -a && [ -f .env ] && . ./.env; set +a; \
-	if [ -z "$$ALLURE_ENDPOINT" ] || [ -z "$$ALLURE_TOKEN" ] || [ -z "$$ALLURE_PROJECT_ID" ]; then \
-		echo "❌ Error: Allure TestOps credentials not configured"; \
-		echo "   Set ALLURE_ENDPOINT, ALLURE_TOKEN, and ALLURE_PROJECT_ID in .env"; \
-		exit 1; \
-	fi; \
-	echo "📤 Uploading results to Allure TestOps..."; \
-	LAUNCH_NAME="$${ALLURE_LAUNCH_NAME:-Test Run - $$(date +%Y-%m-%d)}"; \
-	docker run --rm \
-		-v "$$(pwd)/allure-results:/allure-results:ro" \
-		-e ALLURE_ENDPOINT="$$ALLURE_ENDPOINT" \
-		-e ALLURE_TOKEN="$$ALLURE_TOKEN" \
-		-e ALLURE_PROJECT_ID="$$ALLURE_PROJECT_ID" \
-		allure/allurectl:latest \
-		upload /allure-results --launch-name "$$LAUNCH_NAME"; \
-	echo "✅ Results uploaded to Allure TestOps!"
 
 # Discovery targets
 discover: setup-docker-base

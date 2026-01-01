@@ -180,7 +180,7 @@ def pytest_addoption(parser):
         "--update-baseline",
         action="store",
         default=None,
-        help="Update visual regression baselines. Use 'all' to update all, or 'test_name:key' for specific"
+        help="Update baselines. Use 'all' to update all, 'prometheus' for metrics, or 'test_name' for specific visual tests"
     )
 
 

@@ -10,7 +10,7 @@ from tests.helpers.k8s import wait_for_job_completion, validate_pod_execution
 logger = logging.getLogger(__name__)
 
 
-def create_vault_backup_test_secret(captain_domain, vault_namespace="glueops-core-vault", verbose=False):
+def create_vault_backup_test_secret(vault_test_secrets):
     """Create a timestamped test secret in Vault before triggering backup.
     
     Creates secret at path: secret/glueops-backup-test-secret-{unix_timestamp}
@@ -19,59 +19,23 @@ def create_vault_backup_test_secret(captain_domain, vault_namespace="glueops-cor
     This validates that backups capture fresh data created immediately before backup runs.
     
     Args:
-        captain_domain: Domain for locating Vault terraform state
-        vault_namespace: Kubernetes namespace where Vault is deployed (default: glueops-core-vault)
-        verbose: Print detailed progress messages
+        vault_test_secrets: VaultSecretManager from the vault_test_secrets fixture
     
     Returns: True if secret created successfully, False otherwise
-    
-    Requires: hvac library and vault module
     """
     try:
-        from tests.smoke.test_vault import get_vault_client, cleanup_vault_client
-    except ImportError:
-        if verbose:
-            logger.info("  ⚠ Skipping Vault secret creation (vault module not available)")
-        return False
-    
-    try:
-        import hvac
-    except ImportError:
-        if verbose:
-            logger.info("  ⚠ Skipping Vault secret creation (hvac library not installed)")
-        return False
-    
-    client = None
-    try:
-        if verbose:
-            logger.info(f"  Creating test secret in Vault...")
-        
-        client = get_vault_client(captain_domain, vault_namespace=vault_namespace)
-        
-        # Create secret with unix timestamp
         timestamp = int(time.time())
         utc_time = datetime.now(timezone.utc).isoformat()
         secret_name = f"glueops-backup-test-secret-{timestamp}"
-        secret_path = f"secret/{secret_name}"
         
-        # Create the secret with UTC timestamp as value
-        client.secrets.kv.v2.create_or_update_secret(
+        vault_test_secrets.create_secret(
             path=secret_name,
-            secret={"created_at": utc_time, "timestamp": timestamp}
+            data={"created_at": utc_time, "timestamp": timestamp}
         )
-        
-        if verbose:
-            logger.info(f"  ✓ Created secret: {secret_path}")
-            logger.info(f"    Value: {utc_time}")
-        
-        cleanup_vault_client(client)
         return True
         
     except Exception as e:
-        if verbose:
-            logger.info(f"  ⚠ Failed to create Vault secret: {e}")
-        if client:
-            cleanup_vault_client(client)
+        logger.warning(f"Failed to create Vault backup test secret: {e}")
         return False
 
 
@@ -146,11 +110,12 @@ def test_backup_cronjobs_status(core_v1, batch_v1):
 @pytest.mark.slow
 @pytest.mark.write
 @pytest.mark.backup
-def test_backup_cronjobs_trigger(core_v1, batch_v1, captain_domain, request):
+@pytest.mark.vault
+def test_backup_cronjobs_trigger(core_v1, batch_v1, vault_test_secrets):
     """Manually trigger backup CronJobs and validate execution (WRITE operation).
     
     Trigger mode:
-    - Creates Vault test secret with timestamp (if captain_domain provided)
+    - Creates Vault test secret with timestamp (using vault_test_secrets fixture)
     - Manually creates Job from each CronJob using kubectl
     - Waits up to 300 seconds for all jobs to complete
     - Validates execution: checks pod phase, exit codes, restart counts
@@ -161,8 +126,6 @@ def test_backup_cronjobs_trigger(core_v1, batch_v1, captain_domain, request):
     Cluster Impact: WRITE (creates Jobs, creates Vault secrets)
     """
     backup_namespace = "glueops-core-backup"
-    timeout = 300
-    verbose = request.config.option.verbose > 0
     
     try:
         cronjobs = batch_v1.list_namespaced_cron_job(namespace=backup_namespace)
@@ -178,8 +141,7 @@ def test_backup_cronjobs_trigger(core_v1, batch_v1, captain_domain, request):
     triggered_jobs = []
     
     # Create test secret in Vault before triggering backups
-    if captain_domain:
-        create_vault_backup_test_secret(captain_domain, verbose=verbose)
+    create_vault_backup_test_secret(vault_test_secrets)
     
     for cronjob in cronjobs.items:
         cj_name = cronjob.metadata.name
@@ -193,15 +155,10 @@ def test_backup_cronjobs_trigger(core_v1, batch_v1, captain_domain, request):
         
         if result.returncode == 0:
             triggered_jobs.append({"name": job_name, "cronjob": cj_name})
-            if verbose:
-                logger.info(f"  Triggered: {job_name}")
         else:
             problems.append(f"{cj_name}: {result.stderr.strip()}")
     
     # Wait for triggered jobs
-    if triggered_jobs and verbose:
-        logger.info(f"  Waiting for {len(triggered_jobs)} job(s)...")
-    
     for job_info in triggered_jobs:
         status = wait_for_job_completion(batch_v1, job_info["name"], backup_namespace)
         
