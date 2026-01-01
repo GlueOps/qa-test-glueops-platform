@@ -110,10 +110,10 @@ def cleanup_orphaned_test_resources_session(
     try:
         # Get GitHub client to access tenant org
         import os
-        from github import Github
+        from github import Github, Auth
         github_token = os.environ.get("GITHUB_TOKEN")
         if github_token:
-            g = Github(github_token)
+            g = Github(auth=Auth.Token(github_token))
             dest_owner = g.get_organization(tenant_github_org) if tenant_github_org else g.get_user()
             delete_repos_by_topic(dest_owner, 'createdby-automated-test-delete-me')
             logger.info("   ✓ Orphaned repositories cleaned")
