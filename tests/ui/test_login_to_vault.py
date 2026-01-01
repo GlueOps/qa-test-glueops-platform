@@ -62,7 +62,10 @@ def test_login_to_vault(page, github_credentials, captain_domain, screenshots):
     if "github.com" in page.url:
         log.info("Redirected to GitHub - completing OAuth...")
         from tests.helpers.browser import complete_github_oauth_flow
-        complete_github_oauth_flow(page, github_credentials)
+        oauth_success = complete_github_oauth_flow(page, github_credentials)
+        if not oauth_success:
+            log.error(f"OAuth failed on initial GitHub redirect. Current URL: {page.url}")
+            raise Exception(f"Initial GitHub OAuth authentication failed - URL: {page.url}")
         log.info(f"After OAuth, current URL: {page.url}")
         page.wait_for_timeout(3000)
     
@@ -71,22 +74,9 @@ def test_login_to_vault(page, github_credentials, captain_domain, screenshots):
         log.info("On Vault auth page - filling role field and clicking OIDC button")
         page.get_by_role("textbox", name="Role").fill("reader")
         page.wait_for_timeout(1000)
-        log.info("Clicking 'Sign in with OIDC Provider' button")
         
-        # Wait for navigation after clicking the button
-        with page.expect_navigation(wait_until="load", timeout=30000):
-            page.get_by_role("button", name="Sign in with OIDC Provider").click()
-        
-        log.info(f"After clicking OIDC button, current URL: {page.url}")
-        page.wait_for_timeout(3000)
-        
-        # If redirected to GitHub again, complete OAuth
-        if "github.com" in page.url:
-            log.info("Redirected to GitHub again - completing OAuth...")
-            from tests.helpers.browser import complete_github_oauth_flow
-            complete_github_oauth_flow(page, github_credentials)
-            log.info(f"After second OAuth, current URL: {page.url}")
-            page.wait_for_timeout(3000)
+        from tests.helpers.browser import handle_vault_oidc_popup_auth
+        handle_vault_oidc_popup_auth(page, page.context, github_credentials, screenshots=screenshots)
     
     # Wait for Vault to load
     page.wait_for_timeout(3000)

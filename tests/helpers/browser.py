@@ -8,6 +8,7 @@ import os
 import logging
 import pyotp
 import uuid
+import time
 from pathlib import Path
 from datetime import datetime
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
@@ -15,6 +16,97 @@ from typing import List, Tuple, Optional
 import allure
 
 log = logging.getLogger(__name__)
+
+
+def handle_vault_oidc_popup_auth(page, context, credentials, button_name="Sign in with OIDC Provider", screenshots=None):
+    """
+    Handle Vault OIDC authentication that may open a GitHub OAuth reauthorization popup.
+    
+    This function:
+    1. Clicks the OIDC button and waits up to 30 seconds for a potential popup
+    2. If a popup appears, it's likely a GitHub OAuth reauthorization (as shown in attached screenshot)
+    3. Handles the GitHub OAuth authorization in the popup
+    4. Falls back to direct navigation if no popup appears
+    
+    Args:
+        page: Main Playwright page object
+        context: Browser context for popup detection
+        credentials: Dict with GitHub credentials (username, password, otp_secret)
+        button_name: Name of the OIDC button to click (default: "Sign in with OIDC Provider")
+        screenshots: Optional ScreenshotManager to capture popup screenshots
+        
+    Raises:
+        Exception: For any authentication failures with detailed context
+    """
+    log.info(f"Clicking '{button_name}' button")
+    
+    # Handle potential popup for reauthorization
+    try:
+        log.info("Setting up popup detection with 30-second timeout...")
+        with context.expect_page(timeout=30000) as popup_info:
+            page.get_by_role("button", name=button_name).click()
+            log.info("Button clicked - waiting for potential popup...")
+            popup = popup_info.value
+        
+        # Popup appeared - this is likely GitHub OAuth reauthorization
+        log.info(f"Popup detected! URL: {popup.url}")
+        
+        # Take screenshot of popup for debugging
+        if screenshots:
+            try:
+                log.info("📸 Capturing popup screenshot for debugging...")
+                screenshots.capture(popup, popup.url, "GitHub OAuth Reauthorization Popup")
+            except Exception as e:
+                log.warning(f"Failed to capture popup screenshot: {e}")
+        
+        # Handle GitHub OAuth in the popup
+        if "github.com" in popup.url:
+            log.info("GitHub OAuth reauthorization popup detected - handling authorization...")
+            popup.wait_for_load_state("networkidle", timeout=10000)
+            
+            oauth_success = complete_github_oauth_flow(popup, credentials)
+            if not oauth_success:
+                log.error(f"OAuth authorization failed in popup. URL: {popup.url}")
+                raise Exception(f"GitHub OAuth authorization failed in popup - URL: {popup.url}")
+            
+            log.info("✅ GitHub OAuth authorization completed in popup")
+            
+            # Wait for popup to close after successful authorization
+            try:
+                log.info("Waiting for popup to close after authorization...")
+                popup.wait_for_event("close", timeout=15000)
+                log.info("✅ Popup closed successfully after authorization")
+            except Exception as e:
+                log.error(f"Popup didn't close after authorization: {e}")
+                raise Exception(f"Popup authorization completed but popup didn't close: {e}")
+                
+        elif "vault" in popup.url and "callback" in popup.url:
+            log.info("Vault callback popup detected - waiting for authentication to complete...")
+            # This is likely a vault callback completing authentication, just wait for it to close
+            try:
+                popup.wait_for_event("close", timeout=30000)
+                log.info("✅ Vault callback popup closed - authentication completed")
+            except Exception as e:
+                log.warning(f"Vault callback popup didn't close automatically: {e}")
+                log.info("Authentication may have completed anyway, continuing...")
+        else:
+            log.error(f"Unexpected popup URL: {popup.url}")
+            raise Exception(f"Popup appeared with unexpected URL: {popup.url}")
+        
+    except TimeoutError:
+        log.info("No popup appeared - may have redirected directly")
+        # Handle direct navigation case
+        page.wait_for_timeout(2000)
+        if "github.com" in page.url:
+            log.info("Redirected to GitHub directly - completing OAuth...")
+            oauth_success = complete_github_oauth_flow(page, credentials)
+            if not oauth_success:
+                log.error(f"OAuth failed on direct redirect. Current URL: {page.url}")
+                raise Exception(f"Direct GitHub OAuth authentication failed - URL: {page.url}")
+            log.info(f"After direct OAuth, current URL: {page.url}")
+    
+    page.wait_for_timeout(3000)
+    log.info(f"After OIDC authentication, current URL: {page.url}")
 
 
 # =============================================================================

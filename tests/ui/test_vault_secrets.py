@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.authenticated
 @pytest.mark.ui
 @pytest.mark.write
-def test_vault_secrets(vault_client, authenticated_vault_page, captain_domain, screenshots):
+def test_vault_secrets(vault_client, authenticated_vault_page, captain_domain, screenshots, github_credentials):
     """Test Vault secrets creation and UI viewing.
     
     This test:
@@ -65,12 +65,9 @@ def test_vault_secrets(vault_client, authenticated_vault_page, captain_domain, s
         page.get_by_role("textbox", name="Role").fill("reader")
         page.wait_for_timeout(1000)
         
-        # Wait for navigation after clicking the button
-        with page.expect_navigation(wait_until="load", timeout=30000):
-            page.get_by_role("button", name="Sign in with OIDC Provider").click()
-        
-        # Wait for the secrets page to load
-        page.wait_for_timeout(3000)
+        # Use real GitHub credentials for popup authentication
+        from tests.helpers.browser import handle_vault_oidc_popup_auth
+        handle_vault_oidc_popup_auth(page, page.context, github_credentials, screenshots=screenshots)
     
     # The authenticated_vault_page fixture navigates to /ui/vault/secrets
     # We need to navigate to the secrets list instead
