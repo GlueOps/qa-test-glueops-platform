@@ -246,7 +246,7 @@ spec:
             organization: {tenant_github_org}
             appSecretName: tenant-repo-creds
           filters:
-            - repositoryMatch: demo.*
+            - repositoryMatch: "[Dd][Ee][Mm][Oo].*"
               pathsDoNotExist: [common/common-values.yaml]
             
       - pullRequest:

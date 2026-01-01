@@ -269,8 +269,8 @@ def test_pull_request_environment(
         
         app_name = test_repo.name  # Use actual GitHub repo name
         base_values_content = f"""image:
-  registry: {registry_hostname}
-  repository: {org_name}/{app_name}
+  registry: {registry_hostname.lower()}
+  repository: {org_name.lower()}/{app_name.lower()}
   port: 8080
 service:
   enabled: true
