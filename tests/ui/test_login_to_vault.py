@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 
 @pytest.mark.authenticated
+@pytest.mark.visual
 @pytest.mark.ui
 def test_login_to_vault(page, github_credentials, captain_domain, screenshots):
     """
@@ -88,6 +89,14 @@ def test_login_to_vault(page, github_credentials, captain_domain, screenshots):
     
     log.info("✅ Vault secrets page fully loaded")
     
-    # Capture final state using screenshots fixture
-    screenshots.capture(page, page.url, description="Vault Secrets Page")
+    # Capture final state with visual regression baseline
+    screenshots.capture(
+        page, page.url,
+        description="Vault Secrets Page",
+        baseline_key="vault_secrets_page",
+        threshold=0.0
+    )
+    
+    # Assert no visual regressions
+    assert not screenshots.get_visual_failures(), "Visual regression detected in Vault secrets page"
 

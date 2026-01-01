@@ -273,6 +273,15 @@ ci: setup-docker-base  ## Run all static analysis checks (lint + typecheck)
 	@echo ""
 	@echo "✅ All CI checks passed!"
 
+# Visual regression testing targets
+.PHONY: visual-tests update-baselines
+
+visual-tests: setup-docker-base  ## Run visual regression tests
+	@docker compose run --rm test pytest -m visual -v
+
+update-baselines: setup-docker-base  ## Update all visual regression baselines
+	@docker compose run --rm test pytest -m visual --update-baseline=all -v
+
 # Catch-all pattern rule to allow passing test paths directly
 # This allows: make test tests/smoke/test_file.py::test_name
 %:

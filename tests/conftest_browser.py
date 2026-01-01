@@ -135,10 +135,11 @@ def page(request, captain_domain):
 @pytest.fixture
 def screenshots(request):
     """
-    Screenshot manager with automatic summary logging.
+    Screenshot manager with automatic summary logging and visual regression support.
     
     Creates a ScreenshotManager configured for the current test and
     automatically logs a summary of all captured screenshots on teardown.
+    Supports baseline comparison for visual regression testing.
     
     Scope: function
     
@@ -147,19 +148,42 @@ def screenshots(request):
     
     Usage:
         def test_ui_flow(page, screenshots):
-            page.goto("https://example.com")
+            # Documentation screenshot (no baseline)
             screenshots.capture(page, "https://example.com", "Homepage")
             
-            page.click("button[name='login']")
-            screenshots.capture(page, page.url, "After clicking login")
+            # Visual regression screenshot with baseline comparison
+            screenshots.capture(
+                page, page.url, 
+                "Login Page",
+                baseline_key="login_page",
+                threshold=0.1  # 0.1% acceptable diff
+            )
             
-            # Summary automatically logged at test end
+            # Assert no visual regressions detected
+            assert not screenshots.get_visual_failures()
     """
     # Extract clean test name
     test_name = request.node.name.replace('test_', '')
     manager = ScreenshotManager(test_name=test_name, request=request)
     
+    # Check if baseline update mode enabled
+    update_baseline = request.config.getoption("--update-baseline")
+    if update_baseline:
+        if update_baseline == "all" or update_baseline == request.node.name:
+            manager.update_baseline_mode = True
+            logger.info(f"📝 Baseline update mode enabled for {request.node.name}")
+    
     yield manager
+    
+    # Report visual failures
+    failures = manager.get_visual_failures()
+    if failures:
+        logger.error(f"\n{'='*80}")
+        logger.error(f"❌ VISUAL REGRESSION FAILURES: {len(failures)}")
+        logger.error(f"{'='*80}")
+        for f in failures:
+            logger.error(f"  {f.baseline_key}: {f.diff_percent:.4f}% > {f.threshold}%")
+        logger.error(f"{'='*80}\n")
     
     manager.log_summary()
 

@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 
 
 @pytest.mark.authenticated
+@pytest.mark.visual
 @pytest.mark.ui
 @pytest.mark.captain_manifests
 @pytest.mark.write
@@ -77,5 +78,13 @@ def test_argocd_applications(captain_manifests, authenticated_argocd_page, capta
     
     log.info("="*70 + "\n")
     
-    # Capture screenshot showing the applications
-    screenshots.capture(page, page.url, description="ArgoCD Applications Page with Deployed Apps")
+    # Capture screenshot showing the applications with visual regression baseline
+    screenshots.capture(
+        page, page.url,
+        description="ArgoCD Applications Page with Deployed Apps",
+        baseline_key="argocd_applications_deployed",
+        threshold=0.0
+    )
+    
+    # Assert no visual regressions
+    assert not screenshots.get_visual_failures(), "Visual regression detected in ArgoCD applications page"

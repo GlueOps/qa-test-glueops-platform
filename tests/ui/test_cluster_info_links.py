@@ -8,6 +8,7 @@ log = logging.getLogger(__name__)
 
 @pytest.mark.authenticated
 @pytest.mark.slow
+@pytest.mark.visual
 @pytest.mark.ui
 def test_cluster_info_links(authenticated_cluster_info_page, captain_domain, screenshots):
     """
@@ -47,8 +48,13 @@ def test_cluster_info_links(authenticated_cluster_info_page, captain_domain, scr
     
     log.info("✅ Successfully loaded cluster-info page")
     
-    # Capture screenshot of the cluster-info page before clicking links (fixture handles summary logging)
-    screenshots.capture(page, cluster_info_url, description="Cluster Info Landing Page")
+    # Capture screenshot of the cluster-info page with visual regression baseline
+    screenshots.capture(
+        page, cluster_info_url,
+        description="Cluster Info Landing Page",
+        baseline_key="cluster_info_links_landing",
+        threshold=0.0
+    )
     log.info("📸 Captured screenshot of cluster-info page")
     
     # Find all HTTPS links on the page
@@ -91,8 +97,14 @@ def test_cluster_info_links(authenticated_cluster_info_page, captain_domain, scr
             log.info("Waiting 5 seconds on page...")
             page.wait_for_timeout(5000)
             
-            # Capture screenshot using centralized manager
-            screenshots.capture(page, link_url, description=f"{i}. {urlparse(link_url).netloc}")
+            # Capture screenshot using centralized manager with visual baseline
+            link_key = urlparse(link_url).netloc.replace(".", "_").replace("-", "_")
+            screenshots.capture(
+                page, link_url,
+                description=f"{i}. {urlparse(link_url).netloc}",
+                baseline_key=f"cluster_info_link_{link_key}",
+                threshold=0.0
+            )
             
             log.info(f"✅ Successfully visited: {link_url}")
             
@@ -109,3 +121,6 @@ def test_cluster_info_links(authenticated_cluster_info_page, captain_domain, scr
                 log.warning(f"Could not return to cluster-info page: {e}")
         
     log.info(f"✅ Completed testing {len(unique_links)} links")
+    
+    # Assert no visual regressions across all screenshots
+    assert not screenshots.get_visual_failures(), "Visual regression detected in cluster-info links"

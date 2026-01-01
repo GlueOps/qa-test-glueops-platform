@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 
 @pytest.mark.authenticated
+@pytest.mark.visual
 @pytest.mark.ui
 def test_login_to_grafana(page, github_credentials, captain_domain, screenshots):
     """
@@ -95,5 +96,13 @@ def test_login_to_grafana(page, github_credentials, captain_domain, screenshots)
     
     log.info("✅ Grafana home page fully loaded")
     
-    # Capture final state using screenshots fixture
-    screenshots.capture(page, page.url, description="Grafana Home Page")
+    # Capture final state with visual regression baseline
+    screenshots.capture(
+        page, page.url,
+        description="Grafana Home Page",
+        baseline_key="grafana_home_page",
+        threshold=0.0
+    )
+    
+    # Assert no visual regressions
+    assert not screenshots.get_visual_failures(), "Visual regression detected in Grafana home page"

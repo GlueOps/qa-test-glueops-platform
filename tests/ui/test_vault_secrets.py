@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 
 @pytest.mark.authenticated
+@pytest.mark.visual
 @pytest.mark.ui
 @pytest.mark.write
 def test_vault_secrets(vault_client, authenticated_vault_page, captain_domain, screenshots, github_credentials):
@@ -88,8 +89,16 @@ def test_vault_secrets(vault_client, authenticated_vault_page, captain_domain, s
     log.info("✅ Vault secrets list page loaded successfully")
     log.info(f"   Created secrets: {', '.join(secret_names)}")
     
-    # Capture screenshot showing the secrets
-    screenshots.capture(page, page.url, description="Vault Secrets List")
+    # Capture screenshot showing the secrets with visual regression baseline
+    screenshots.capture(
+        page, page.url,
+        description="Vault Secrets List",
+        baseline_key="vault_secrets_list",
+        threshold=0.0
+    )
+    
+    # Assert no visual regressions
+    assert not screenshots.get_visual_failures(), "Visual regression detected in Vault secrets list"
     
     # Cleanup: Delete test secrets
     log.info("\n🧹 Cleaning up test secrets...")

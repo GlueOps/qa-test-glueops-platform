@@ -148,6 +148,7 @@ NAME_VARIATIONS = [
 @pytest.mark.gitops
 @pytest.mark.preview_environments
 @pytest.mark.captain_manifests
+@pytest.mark.visual
 @pytest.mark.parametrize("repo_name,branch_name", NAME_VARIATIONS, ids=[
     "kebab-case",
     "underscores",
@@ -502,7 +503,12 @@ ingress:
             
             github_page.goto(pr.html_url, wait_until="load", timeout=30000)
             github_page.wait_for_timeout(3000)
-            screenshot_manager.capture(github_page, pr.html_url, "GitHub PR with bot comment")
+            screenshot_manager.capture(
+                github_page, pr.html_url,
+                description="GitHub PR with bot comment",
+                baseline_key="pr_github_bot_comment",
+                threshold=0.0
+            )
             logger.info(f"   ✓ GitHub PR screenshot captured")
             
             # ================================================================
@@ -516,7 +522,12 @@ ingress:
             
             argocd_page.goto(comment_data['argocd_url'], wait_until="load", timeout=30000)
             argocd_page.wait_for_timeout(5000)  # ArgoCD can be slow to render
-            screenshot_manager.capture(argocd_page, comment_data['argocd_url'], "ArgoCD Application")
+            screenshot_manager.capture(
+                argocd_page, comment_data['argocd_url'],
+                description="ArgoCD Application",
+                baseline_key="pr_argocd_application",
+                threshold=0.0
+            )
             logger.info(f"   ✓ ArgoCD screenshot captured")
             
             # ================================================================
@@ -545,7 +556,12 @@ ingress:
             # Use existing github page for unauthenticated preview screenshot
             github_page.goto(preview_url, wait_until="load", timeout=30000)
             github_page.wait_for_timeout(2000)
-            screenshot_manager.capture(github_page, preview_url, "Deployment Preview (HTTP Debug)")
+            screenshot_manager.capture(
+                github_page, preview_url,
+                description="Deployment Preview (HTTP Debug)",
+                baseline_key="pr_deployment_preview",
+                threshold=0.0
+            )
             logger.info(f"   ✓ Deployment preview screenshot captured")
             
             # ================================================================
@@ -559,7 +575,12 @@ ingress:
             
             grafana_page.goto(comment_data['loki_logs_url'], wait_until="load", timeout=30000)
             grafana_page.wait_for_timeout(5000)
-            screenshot_manager.capture(grafana_page, comment_data['loki_logs_url'], "Loki Logs Dashboard")
+            screenshot_manager.capture(
+                grafana_page, comment_data['loki_logs_url'],
+                description="Loki Logs Dashboard",
+                baseline_key="pr_loki_logs_dashboard",
+                threshold=0.0
+            )
             logger.info(f"   ✓ Loki logs screenshot captured")
             
             # ================================================================
@@ -575,8 +596,19 @@ ingress:
             logger.info(f"   Capturing Grafana metrics: {comment_data['grafana_metrics_url']}")
             grafana_page.goto(comment_data['grafana_metrics_url'], wait_until="load", timeout=30000)
             grafana_page.wait_for_timeout(5000)  # Grafana needs time to load panels
-            screenshot_manager.capture(grafana_page, comment_data['grafana_metrics_url'], "Grafana Metrics Dashboard")
+            screenshot_manager.capture(
+                grafana_page, comment_data['grafana_metrics_url'],
+                description="Grafana Metrics Dashboard",
+                baseline_key="pr_grafana_metrics_dashboard",
+                threshold=0.0
+            )
             logger.info(f"   ✓ Grafana metrics screenshot captured")
+            
+            # Assert no visual regressions
+            failures = screenshot_manager.get_visual_failures()
+            if failures:
+                failure_msgs = [f"{f.baseline_key}: {f.diff_percent:.4f}%" for f in failures]
+                pytest.fail(f"Visual regression detected: {', '.join(failure_msgs)}")
             
             # Log screenshot summary
             screenshot_manager.log_summary()

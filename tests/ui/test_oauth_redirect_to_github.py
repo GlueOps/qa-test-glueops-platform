@@ -8,6 +8,7 @@ import pytest
 
 
 @pytest.mark.oauth_redirect
+@pytest.mark.visual
 @pytest.mark.ui
 @pytest.mark.parametrize(
     "service_name,url_path",
@@ -56,5 +57,13 @@ def test_oauth_redirect_to_github(page, captain_domain, screenshots, service_nam
         f"{service_name} did not redirect to GitHub OAuth login. Final URL: {final_url}"
     )
     
-    # Capture screenshot of GitHub OAuth page (fixture handles summary logging)
-    screenshots.capture(page, final_url, description=f"{service_name} - GitHub OAuth Login")
+    # Capture screenshot of GitHub OAuth page with visual regression baseline
+    screenshots.capture(
+        page, final_url,
+        description=f"{service_name} - GitHub OAuth Login",
+        baseline_key=f"github_oauth_{service_name}",
+        threshold=0.0
+    )
+    
+    # Assert no visual regressions
+    assert not screenshots.get_visual_failures(), f"Visual regression detected in {service_name} OAuth redirect"

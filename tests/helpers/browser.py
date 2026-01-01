@@ -8,14 +8,25 @@ import os
 import logging
 import pyotp
 import uuid
-import time
 from pathlib import Path
 from datetime import datetime
+from dataclasses import dataclass
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
 from typing import List, Tuple, Optional
 import allure
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class VisualComparisonResult:
+    """Result of a visual regression comparison."""
+    baseline_key: str
+    passed: bool
+    diff_percent: float
+    threshold: float
+    diff_image_path: Optional[Path]
+    baseline_created: bool = False  # True if baseline was auto-created
 
 
 def handle_vault_oidc_popup_auth(page, context, credentials, button_name="Sign in with OIDC Provider", screenshots=None):
@@ -281,7 +292,8 @@ class ScreenshotManager:
     Centralized screenshot management for UI tests.
     
     Handles screenshot capture with UUID7 filenames, relative path tracking,
-    and summary generation for pytest-html reports.
+    and summary generation for pytest-html reports. Supports visual regression
+    testing with baseline comparison.
     """
     
     def __init__(self, screenshots_dir: Optional[str] = None, test_name: Optional[str] = None, request=None):
@@ -307,6 +319,12 @@ class ScreenshotManager:
         self.screenshots: List[Tuple[str, str, str]] = []
         self.request = request
         
+        # Visual regression support
+        self.visual_results: List[VisualComparisonResult] = []
+        self.baselines_dir = Path("baselines/screenshots")
+        self.diffs_dir = Path("allure-results/diffs")
+        self.update_baseline_mode = False
+        
         self.screenshots_dir.mkdir(parents=True, exist_ok=True)
     
     def capture(
@@ -314,23 +332,49 @@ class ScreenshotManager:
         page: Page, 
         url: str, 
         description: Optional[str] = None,
-        full_page: bool = True
+        full_page: bool = True,
+        baseline_key: Optional[str] = None,
+        threshold: Optional[float] = None,
+        always_generate_diff: bool = False
     ) -> Path:
         """
-        Capture a screenshot and attach to Allure report.
+        Capture screenshot with optional visual regression baseline comparison.
         
         Args:
             page: Playwright page instance
             url: URL being captured
-            description: Optional description
+            description: Optional description for reporting
             full_page: Whether to capture full page (default: True)
+            baseline_key: Key for baseline comparison (e.g., "login_page")
+                         If provided, enables visual regression testing
+            threshold: REQUIRED when baseline_key is set. 
+                      Acceptable diff percentage (e.g., 0.1 = 0.1%)
+            always_generate_diff: If True, generate diff image even when comparison passes.
+                                 Useful for verification/documentation.
+                      
+        Raises:
+            ValueError: If baseline_key provided without threshold
             
         Returns:
             Path: Absolute path to saved screenshot
         """
-        uuid_suffix = str(uuid.uuid4())[:8]
-        base_name = self.test_name.replace(" ", "_").lower()
-        screenshot_filename = f"{base_name}_{uuid_suffix}.png"
+        # Validate required threshold
+        if baseline_key is not None and threshold is None:
+            raise ValueError(
+                "threshold is required when baseline_key is provided for visual comparison. "
+                "Example: capture(page, url, 'Login', baseline_key='login_page', threshold=0.1)"
+            )
+        
+        # Determine filename based on baseline mode
+        if baseline_key is not None:
+            # Deterministic filename for baseline matching
+            screenshot_filename = f"{baseline_key}.png"
+        else:
+            # UUID-based filename for documentation screenshots
+            uuid_suffix = str(uuid.uuid4())[:8]
+            base_name = self.test_name.replace(" ", "_").lower()
+            screenshot_filename = f"{base_name}_{uuid_suffix}.png"
+        
         screenshot_path = self.screenshots_dir / screenshot_filename
         
         log.info(f"📸 Capturing screenshot: {screenshot_filename}")
@@ -346,6 +390,19 @@ class ScreenshotManager:
             name=desc,
             attachment_type=allure.attachment_type.PNG
         )
+        
+        # Perform visual comparison if baseline_key provided
+        if baseline_key is not None:
+            # threshold is guaranteed to be float here due to validation above
+            assert threshold is not None, "threshold validated above"
+            result = self._compare_to_baseline(
+                screenshot_path, 
+                baseline_key, 
+                threshold, 
+                desc,
+                always_generate_diff
+            )
+            self.visual_results.append(result)
         
         return screenshot_path.absolute()
     
@@ -373,6 +430,175 @@ class ScreenshotManager:
     def get_screenshots(self) -> List[Tuple[str, str, str]]:
         """Get all captured screenshots metadata."""
         return self.screenshots.copy()
+
+    def _compare_to_baseline(
+        self, 
+        screenshot_path: Path, 
+        baseline_key: str, 
+        threshold: float,
+        description: str,
+        always_generate_diff: bool = False
+    ) -> VisualComparisonResult:
+        """
+        Compare screenshot to baseline or create baseline if missing.
+        
+        Args:
+            screenshot_path: Path to current screenshot
+            baseline_key: Baseline key
+            threshold: Acceptable diff percentage
+            description: Description for logging
+            always_generate_diff: Generate diff image even on pass
+            
+        Returns:
+            VisualComparisonResult with comparison details
+        """
+        try:
+            from PIL import Image
+            from pixelmatch.contrib.PIL import pixelmatch
+        except ImportError as e:
+            log.error(f"Visual regression dependencies not installed: {e}")
+            log.error("Install with: pip install pixelmatch numpy Pillow")
+            raise
+        
+        # Baseline path: baselines/screenshots/{test_name}/{baseline_key}.png
+        baseline_dir = self.baselines_dir / self.test_name
+        baseline_path = baseline_dir / f"{baseline_key}.png"
+        
+        # Update baseline mode - overwrite and return pass
+        if self.update_baseline_mode:
+            baseline_dir.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy(screenshot_path, baseline_path)
+            log.info(f"📝 Updated baseline: {baseline_path}")
+            return VisualComparisonResult(
+                baseline_key=baseline_key,
+                passed=True,
+                diff_percent=0.0,
+                threshold=threshold,
+                diff_image_path=None,
+                baseline_created=True
+            )
+        
+        # Baseline missing - create and pass with warning
+        if not baseline_path.exists():
+            baseline_dir.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy(screenshot_path, baseline_path)
+            log.warning(f"⚠️  Baseline missing - created new baseline: {baseline_path}")
+            log.warning(f"   This test will PASS. Run again to perform actual comparison.")
+            return VisualComparisonResult(
+                baseline_key=baseline_key,
+                passed=True,
+                diff_percent=0.0,
+                threshold=threshold,
+                diff_image_path=None,
+                baseline_created=True
+            )
+        
+        # Load images
+        baseline_img = Image.open(baseline_path).convert("RGBA")
+        current_img = Image.open(screenshot_path).convert("RGBA")
+        
+        # Ensure same dimensions
+        if baseline_img.size != current_img.size:
+            log.error(f"❌ Image size mismatch: baseline {baseline_img.size} vs current {current_img.size}")
+            return VisualComparisonResult(
+                baseline_key=baseline_key,
+                passed=False,
+                diff_percent=100.0,
+                threshold=threshold,
+                diff_image_path=None
+            )
+        
+        # Create diff image
+        width, height = baseline_img.size
+        diff_img = Image.new("RGBA", (width, height))
+        
+        # Run pixelmatch
+        mismatch_pixels = pixelmatch(
+            baseline_img, 
+            current_img, 
+            diff_img,
+            threshold=0.1,  # Anti-aliasing tolerance (0-1 scale)
+            includeAA=False  # Don't highlight anti-aliasing differences
+        )
+        
+        total_pixels = width * height
+        diff_percent = (mismatch_pixels / total_pixels) * 100
+        
+        passed = diff_percent <= threshold
+        
+        log.info(f"{'✅' if passed else '❌'} Visual comparison: {baseline_key}")
+        log.info(f"   Diff: {diff_percent:.4f}% (threshold: {threshold}%)")
+        log.info(f"   Mismatched pixels: {mismatch_pixels:,} / {total_pixels:,}")
+        
+        # Save diff image if failed or forced
+        diff_image_path = None
+        if not passed or always_generate_diff:
+            from PIL import ImageDraw
+            
+            self.diffs_dir.mkdir(parents=True, exist_ok=True)
+            diff_image_path = self.diffs_dir / f"{self.test_name}_{baseline_key}_diff.png"
+            
+            # Create side-by-side composite with labels: baseline | current | diff
+            label_height = 40  # Height for label bar at top
+            composite = Image.new("RGBA", (width * 3, height + label_height), color="white")
+            
+            # Paste images below label area
+            composite.paste(baseline_img, (0, label_height))
+            composite.paste(current_img, (width, label_height))
+            composite.paste(diff_img, (width * 2, label_height))
+            
+            # Add labels
+            draw = ImageDraw.Draw(composite)
+            
+            # Draw label backgrounds
+            draw.rectangle([(0, 0), (width, label_height)], fill="#f0f0f0")
+            draw.rectangle([(width, 0), (width * 2, label_height)], fill="#f0f0f0")
+            draw.rectangle([(width * 2, 0), (width * 3, label_height)], fill="#f0f0f0")
+            
+            # Draw vertical separators
+            draw.line([(width, 0), (width, height + label_height)], fill="#cccccc", width=2)
+            draw.line([(width * 2, 0), (width * 2, height + label_height)], fill="#cccccc", width=2)
+            
+            # Draw labels (using default font for maximum compatibility)
+            # Position text at top-left of each panel with padding
+            draw.text((10, 10), "BASELINE", fill="black")
+            draw.text((width + 10, 10), "CURRENT", fill="black")
+            
+            # Diff label with percentage
+            diff_color = "#d32f2f" if not passed else "#388e3c"  # Red if failed, green if passed
+            draw.text((width * 2 + 10, 10), f"DIFF: {diff_percent:.4f}%", fill=diff_color)
+            
+            composite.save(diff_image_path)
+            
+            # Attach to Allure with appropriate status
+            status_icon = "❌" if not passed else "✅"
+            log_fn = log.error if not passed else log.info
+            allure.attach.file(
+                str(diff_image_path),
+                name=f"{status_icon} DIFF: {description} ({diff_percent:.4f}% mismatch)",
+                attachment_type=allure.attachment_type.PNG
+            )
+            
+            log_fn(f"   Diff image saved: {diff_image_path}")
+        
+        return VisualComparisonResult(
+            baseline_key=baseline_key,
+            passed=passed,
+            diff_percent=diff_percent,
+            threshold=threshold,
+            diff_image_path=diff_image_path
+        )
+
+    def get_visual_failures(self) -> List[VisualComparisonResult]:
+        """
+        Get all failed visual comparisons.
+        
+        Returns:
+            List of VisualComparisonResult for failed comparisons
+        """
+        return [r for r in self.visual_results if not r.passed and not r.baseline_created]
 
 
 # =============================================================================

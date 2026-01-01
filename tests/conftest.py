@@ -176,6 +176,12 @@ def pytest_addoption(parser):
         default=None,
         help="Filter tests to specific namespace"
     )
+    parser.addoption(
+        "--update-baseline",
+        action="store",
+        default=None,
+        help="Update visual regression baselines. Use 'all' to update all, or 'test_name:key' for specific"
+    )
 
 
 def pytest_configure(config):

@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 
 @pytest.mark.authenticated
+@pytest.mark.visual
 @pytest.mark.ui
 def test_login_to_cluster_info(authenticated_cluster_info_page, captain_domain, screenshots):
     """Test cluster-info login via GitHub OAuth flow.
@@ -39,5 +40,13 @@ def test_login_to_cluster_info(authenticated_cluster_info_page, captain_domain, 
     
     log.info("✅ Cluster-info page fully loaded")
     
-    # Capture final state (fixture handles summary logging)
-    screenshots.capture(page, page.url, description="Cluster Info Landing Page")
+    # Capture final state with visual regression baseline
+    screenshots.capture(
+        page, page.url,
+        description="Cluster Info Landing Page",
+        baseline_key="cluster_info_landing",
+        threshold=0.0
+    )
+    
+    # Assert no visual regressions
+    assert not screenshots.get_visual_failures(), "Visual regression detected in cluster-info page"

@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 
 @pytest.mark.authenticated
+@pytest.mark.visual
 @pytest.mark.ui
 def test_grafana_dashboard(authenticated_grafana_page, captain_domain, screenshots):
     """Test Grafana Kubernetes dashboard access.
@@ -52,5 +53,13 @@ def test_grafana_dashboard(authenticated_grafana_page, captain_domain, screensho
     
     log.info("✅ Grafana dashboard loaded successfully")
     
-    # Capture screenshot
-    screenshots.capture(page, page.url, description="Kubernetes Compute Resources Dashboard")
+    # Capture screenshot with visual regression baseline
+    screenshots.capture(
+        page, page.url,
+        description="Kubernetes Compute Resources Dashboard",
+        baseline_key="grafana_k8s_compute_dashboard",
+        threshold=0.0
+    )
+    
+    # Assert no visual regressions
+    assert not screenshots.get_visual_failures(), "Visual regression detected in Grafana dashboard"
