@@ -499,15 +499,63 @@ class ScreenshotManager:
         baseline_img = Image.open(baseline_path).convert("RGBA")
         current_img = Image.open(screenshot_path).convert("RGBA")
         
-        # Ensure same dimensions
-        if baseline_img.size != current_img.size:
+        # Handle size mismatch - still generate a visual comparison
+        size_mismatch = baseline_img.size != current_img.size
+        if size_mismatch:
             log.error(f"❌ Image size mismatch: baseline {baseline_img.size} vs current {current_img.size}")
+            
+            # Generate side-by-side comparison for size mismatch
+            from PIL import ImageDraw
+            
+            self.diffs_dir.mkdir(parents=True, exist_ok=True)
+            size_mismatch_diff_path = self.diffs_dir / f"{self.test_name}_{baseline_key}_diff.png"
+            
+            # Create composite showing both images at their original sizes
+            b_width, b_height = baseline_img.size
+            c_width, c_height = current_img.size
+            
+            label_height = 60  # Extra height for size info
+            max_height = max(b_height, c_height)
+            total_width = b_width + c_width
+            
+            composite = Image.new("RGBA", (total_width, max_height + label_height), color="white")
+            
+            # Paste images below label area (top-aligned)
+            composite.paste(baseline_img, (0, label_height))
+            composite.paste(current_img, (b_width, label_height))
+            
+            # Add labels with size info
+            draw = ImageDraw.Draw(composite)
+            
+            # Draw label backgrounds
+            draw.rectangle([(0, 0), (b_width, label_height)], fill="#f0f0f0")
+            draw.rectangle([(b_width, 0), (total_width, label_height)], fill="#fff3e0")  # Orange tint for mismatch
+            
+            # Draw vertical separator
+            draw.line([(b_width, 0), (b_width, max_height + label_height)], fill="#cccccc", width=2)
+            
+            # Draw labels with size info
+            draw.text((10, 10), f"BASELINE: {b_width}x{b_height}", fill="black")
+            draw.text((b_width + 10, 10), f"CURRENT: {c_width}x{c_height}", fill="#d32f2f")
+            draw.text((10, 32), "SIZE MISMATCH - Cannot compute pixel diff", fill="#d32f2f")
+            
+            composite.save(size_mismatch_diff_path)
+            
+            # Attach to Allure
+            allure.attach.file(
+                str(size_mismatch_diff_path),
+                name=f"❌ SIZE MISMATCH: {description} (baseline {b_width}x{b_height} vs current {c_width}x{c_height})",
+                attachment_type=allure.attachment_type.PNG
+            )
+            
+            log.error(f"   Size mismatch diff saved: {size_mismatch_diff_path}")
+            
             return VisualComparisonResult(
                 baseline_key=baseline_key,
                 passed=False,
                 diff_percent=100.0,
                 threshold=threshold,
-                diff_image_path=None
+                diff_image_path=size_mismatch_diff_path
             )
         
         # Create diff image
@@ -533,7 +581,7 @@ class ScreenshotManager:
         log.info(f"   Mismatched pixels: {mismatch_pixels:,} / {total_pixels:,}")
         
         # Save diff image if failed or forced
-        diff_image_path = None
+        diff_image_path: Optional[Path] = None
         if not passed or always_generate_diff:
             from PIL import ImageDraw
             

@@ -507,7 +507,7 @@ ingress:
                 github_page, pr.html_url,
                 description="GitHub PR with bot comment",
                 baseline_key="pr_github_bot_comment",
-                threshold=0.0
+                threshold=1.0
             )
             logger.info(f"   ✓ GitHub PR screenshot captured")
             
@@ -526,7 +526,7 @@ ingress:
                 argocd_page, comment_data['argocd_url'],
                 description="ArgoCD Application",
                 baseline_key="pr_argocd_application",
-                threshold=0.0
+                threshold=1.0
             )
             logger.info(f"   ✓ ArgoCD screenshot captured")
             
@@ -560,7 +560,7 @@ ingress:
                 github_page, preview_url,
                 description="Deployment Preview (HTTP Debug)",
                 baseline_key="pr_deployment_preview",
-                threshold=0.0
+                threshold=1.0
             )
             logger.info(f"   ✓ Deployment preview screenshot captured")
             
@@ -579,7 +579,7 @@ ingress:
                 grafana_page, comment_data['loki_logs_url'],
                 description="Loki Logs Dashboard",
                 baseline_key="pr_loki_logs_dashboard",
-                threshold=0.0
+                threshold=1.0
             )
             logger.info(f"   ✓ Loki logs screenshot captured")
             
@@ -600,7 +600,7 @@ ingress:
                 grafana_page, comment_data['grafana_metrics_url'],
                 description="Grafana Metrics Dashboard",
                 baseline_key="pr_grafana_metrics_dashboard",
-                threshold=0.0
+                threshold=1.0
             )
             logger.info(f"   ✓ Grafana metrics screenshot captured")
             

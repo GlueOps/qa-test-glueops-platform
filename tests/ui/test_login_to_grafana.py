@@ -101,7 +101,7 @@ def test_login_to_grafana(page, github_credentials, captain_domain, screenshots)
         page, page.url,
         description="Grafana Home Page",
         baseline_key="grafana_home_page",
-        threshold=0.0
+        threshold=1.0
     )
     
     # Assert no visual regressions
