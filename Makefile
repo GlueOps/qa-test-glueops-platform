@@ -42,6 +42,7 @@ help:
 	@echo "  make test PYTEST_ARGS='--update-baseline=all -m ui'     - Update baselines and run UI tests"
 	@echo "  make test PYTEST_ARGS='tests/smoke/test_argocd.py'      - Run specific file"
 	@echo "  make test PYTEST_ARGS='-m quick tests/smoke/'           - Combine marker + path"
+	@echo "  make shell                                              - Open interactive bash shell for debugging"
 	@echo ""
 	@echo "Advanced: Override with PYTEST_FLAGS variable if needed:"
 	@echo "  make test PYTEST_FLAGS='--reruns 0' PYTEST_ARGS='-m ui'"
@@ -79,7 +80,9 @@ build:
 
 # Common setup targets
 setup-kubeconfig:
-	@cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig
+	@if [ "$${KUBECONFIG:-$$HOME/.kube/config}" != "$$(pwd)/kubeconfig" ]; then \
+		cp $${KUBECONFIG:-$$HOME/.kube/config} ./kubeconfig; \
+	fi
 	@chmod 600 ./kubeconfig
 
 setup-allure:
@@ -101,6 +104,13 @@ test: setup-docker-base setup-allure
 		$(ALL_PYTEST_ARGS)
 	@echo "✅ Tests complete! Generate report with: make report"
 	@docker exec allure-server pkill -HUP java 2>/dev/null || true
+
+shell: setup-docker-base setup-allure
+	$(DOCKER_RUN) $(DOCKER_VOLUMES) \
+		$(ENV_FILE_FLAG) \
+		$(DOCKER_ENV) \
+		--entrypoint bash \
+		glueops-tests
 
 # Cleanup
 clean:

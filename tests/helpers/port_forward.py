@@ -43,7 +43,7 @@ class PortForward:
         )
         
         # Wait for port-forward to be ready
-        time.sleep(2)
+        time.sleep(10)
         
         return self
     
