@@ -114,8 +114,13 @@ clean-reports:
 clean-baselines:
 	rm -f baselines/*.json baselines/**/*.png
 
-# Generate portable single-file HTML report
+# Generate portable single-file HTML report, upload to Slack, and cleanup
 report: setup-allure
+	@if [ -z "$$(ls -A allure-results/*.json 2>/dev/null)" ]; then \
+		echo "❌ No test results found in allure-results/. Run 'make test' first."; \
+		exit 1; \
+	fi
+	$(eval REPORT_TS := $(shell date +%Y%m%d-%H%M%S))
 	@echo "Generating single-file HTML report..."
 	@mkdir -p allure-single-file
 	@sudo chmod -R 777 allure-single-file
@@ -124,8 +129,18 @@ report: setup-allure
 		-v "$$(pwd)/allure-single-file:/allure-single-file" \
 		frankescobar/allure-docker-service \
 		allure generate /allure-results -o /allure-single-file --single-file --clean
-	@echo "✅ Single-file report generated at: allure-single-file/index.html"
-	@echo "   This file can be shared and opened directly in any browser"
+	@mv allure-single-file/index.html allure-single-file/report-$(REPORT_TS).html
+	@echo "✅ Report generated: allure-single-file/report-$(REPORT_TS).html"
+	@echo "Uploading to Slack..."
+	@docker run --rm \
+		-v "$$(pwd)/allure-single-file:/allure-single-file:ro" \
+		-v "$$(pwd)/send-to-slack.sh:/send-to-slack.sh:ro" \
+		$(ENV_FILE_FLAG) \
+		dwdraju/alpine-curl-jq \
+		/bin/sh /send-to-slack.sh /allure-single-file/report-$(REPORT_TS).html \
+		&& rm -f allure-single-file/report-$(REPORT_TS).html \
+		&& echo "✅ Uploaded to Slack and cleaned up report"
+	@$(MAKE) clean-reports
 
 # Discovery targets
 discover: setup-docker-base
