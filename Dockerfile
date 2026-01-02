@@ -42,6 +42,3 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 ENV TZ=UTC
 
-# Use pytest as entrypoint (accepts pytest args)
-ENTRYPOINT ["pytest"]
-CMD ["-m", "smoke", "-v"]
