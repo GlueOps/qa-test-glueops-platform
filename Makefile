@@ -136,7 +136,7 @@ report: setup-allure
 		-v "$$(pwd)/allure-single-file:/allure-single-file:ro" \
 		-v "$$(pwd)/send-to-slack.sh:/send-to-slack.sh:ro" \
 		$(ENV_FILE_FLAG) \
-		dwdraju/alpine-curl-jq \
+		dwdraju/alpine-curl-jq@sha256:eb00b3d4864c03814885a1c15ed1f5b2b569ca102ad4d02c27d582affb4fd6b1 \
 		/bin/sh /send-to-slack.sh /allure-single-file/report-$(REPORT_TS).html \
 		&& rm -f allure-single-file/report-$(REPORT_TS).html \
 		&& echo "✅ Uploaded to Slack and cleaned up report"
