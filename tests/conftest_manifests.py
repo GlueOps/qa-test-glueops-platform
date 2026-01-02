@@ -16,6 +16,7 @@ from typing import Optional, TypedDict, List
 
 from tests.helpers.k8s import (
     wait_for_argocd_apps_deleted,
+    ensure_argocd_app_allows_empty,
 )
 from tests.helpers.argocd import (
     wait_for_argocd_apps_by_project_deleted,
@@ -292,6 +293,11 @@ def _cleanup_manifests(
         custom_api: Kubernetes CustomObjectsApi client
     """
     try:
+        # Step 0: Ensure captain-manifests allows empty sync to prevent
+        # "auto-sync will wipe out all resources" errors during cleanup
+        logger.info("Ensuring captain-manifests allows empty sync...")
+        ensure_argocd_app_allows_empty(custom_api, "captain-manifests", "glueops-core")
+        
         # Step 1: Delete ApplicationSets first
         logger.info("\n🗑️  Step 1: Deleting ApplicationSets...")
         commit_sha = delete_file_if_exists(
@@ -513,6 +519,10 @@ def captain_manifests(
     # Pre-cleanup: Delete existing manifests in reverse order of creation
     # CRITICAL: Must delete ApplicationSet first to avoid "appproject not found" errors
     logger.info("\n📋 Pre-cleanup: Removing existing manifests (reverse order of creation)...")
+    
+    # Ensure captain-manifests allows empty sync before cleanup
+    logger.info("   Ensuring captain-manifests allows empty sync...")
+    ensure_argocd_app_allows_empty(custom_api, "captain-manifests", "glueops-core")
     
     for i, (name, path) in enumerate(reversed(list(manifest_paths.items())), 1):
         logger.info(f"   {i}. Deleting {name}...")
