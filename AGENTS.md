@@ -512,13 +512,38 @@ The `PortForward` context manager handles this automatically.
 
 ## Adding New Tests
 
-1. Choose appropriate test directory (`smoke/`, `gitops/`, `ui/`)
-2. Import helpers from `tests.helpers.*` modules
-3. Add pytest markers for categorization
-4. Write comprehensive docstring with Validates/Fails/Cluster Impact sections
-5. Use existing functions from `tests.helpers.assertions` when possible
-6. For custom validation, use validators from `tests.helpers.k8s`
-7. Follow the test patterns above
+**👉 See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete step-by-step guide.**
+
+### Quick Start
+
+1. Copy the appropriate template:
+   ```bash
+   cp tests/templates/_test_smoke_template.py tests/smoke/test_my_feature.py
+   cp tests/templates/_test_gitops_template.py tests/gitops/test_my_workflow.py
+   cp tests/templates/_test_ui_template.py tests/ui/test_my_ui.py
+   ```
+
+2. Customize with your test logic
+
+3. Run `make ci` to validate (lint + typecheck)
+
+4. Test with `pytest tests/your_dir/test_your_file.py -v`
+
+### Available Templates
+
+| Template | Use For |
+|----------|---------|
+| `tests/templates/_test_smoke_template.py` | Read-only validation tests |
+| `tests/templates/_test_gitops_template.py` | GitOps deployment workflow tests |
+| `tests/templates/_test_ui_template.py` | Browser automation tests |
+
+### Checklist
+
+- [ ] Choose appropriate test directory (`smoke/`, `gitops/`, `ui/`)
+- [ ] Add required pytest markers (suite, speed, priority, cluster impact)
+- [ ] Write comprehensive docstring with Validates/Fails/Cluster Impact sections
+- [ ] Use existing helpers from `tests.helpers.*` when possible
+- [ ] Run `make ci` before committing
 
 ## Recent Refactoring (December 2025)
 
@@ -745,15 +770,36 @@ expected_total = fixture_app_count + num_apps  # e.g., 3 + 3 = 6
 
 ---
 
-**Last Updated**: December 27, 2025  
+**Last Updated**: January 2, 2026  
 **Major Refactor**: Consolidated `lib/` into `tests/helpers/` package with clean separation of validators and assertions.
 
 ## Documentation Structure
 
 This repository has the following documentation:
 
-- **[AGENTS.md](AGENTS.md)** (this file) - Comprehensive guide for AI agents and developers
-- **[CLAUDE.md](CLAUDE.md)** - Redirect to AGENTS.md (consolidated)
-- **[README.md](README.md)** - User-facing quick start guide
-- **[tests/ui/CLAUDE.md](tests/ui/CLAUDE.md)** - Detailed UI testing guide with Playwright
-- **[PLAN.md](PLAN.md)** - Roadmap and future enhancements
+| Document | Purpose |
+|----------|---------|
+| **[AGENTS.md](AGENTS.md)** (this file) | Comprehensive guide for AI agents and developers |
+| **[CONTRIBUTING.md](CONTRIBUTING.md)** | Step-by-step guide for adding new tests with templates |
+| **[README.md](README.md)** | User-facing quick start guide |
+| **[tests/ui/CLAUDE.md](tests/ui/CLAUDE.md)** | Detailed UI testing guide with Playwright |
+| **[CLAUDE.md](CLAUDE.md)** | Redirect to AGENTS.md (consolidated) |
+| **[PLAN.md](PLAN.md)** | Roadmap and future enhancements |
+
+### Test Templates
+
+Copy-paste ready templates for new tests:
+
+| Template | Use Case |
+|----------|----------|
+| `tests/templates/_test_smoke_template.py` | Read-only validation tests |
+| `tests/templates/_test_gitops_template.py` | GitOps deployment workflow tests |
+| `tests/templates/_test_ui_template.py` | Browser automation tests |
+
+### Reference Documentation (docs/)
+
+| Document | Content |
+|----------|---------|
+| `docs/fixtures.md` | Complete fixture catalog with usage examples |
+| `docs/architecture.md` | Test suite architecture and design decisions |
+| `docs/troubleshooting.md` | Common issues and solutions |

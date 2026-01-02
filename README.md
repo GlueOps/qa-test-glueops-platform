@@ -3,6 +3,7 @@
 Comprehensive test suite for validating GlueOps PaaS platform deployments using pytest.
 
 **📚 Documentation:**
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - **Start here** to add new tests (templates, patterns, checklist)
 - **[AGENTS.md](AGENTS.md)** - Comprehensive guide for AI agents and developers (architecture, patterns, troubleshooting)
 - **[tests/ui/CLAUDE.md](tests/ui/CLAUDE.md)** - Detailed UI testing guide with Playwright
 - **[PLAN.md](PLAN.md)** - Roadmap and future enhancements
@@ -19,6 +20,31 @@ make local-full   # Run full tests locally
 # UI tests (requires Chrome at localhost:9222)
 make ui-auth      # ArgoCD, Grafana, Vault login tests
 ```
+
+## Contributing New Tests
+
+**See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.** Quick summary:
+
+1. Copy the appropriate template from `tests/templates/`:
+   ```bash
+   cp tests/templates/_test_smoke_template.py tests/smoke/test_my_feature.py
+   ```
+
+2. Customize the template with your test logic
+
+3. Run static analysis and test:
+   ```bash
+   make ci                                    # Lint + typecheck
+   pytest tests/smoke/test_my_feature.py -v  # Run your test
+   ```
+
+### When to Use Which Test Type
+
+| Test Type | Directory | Use When |
+|-----------|-----------|----------|
+| **Smoke** | `tests/smoke/` | Validating existing resources (read-only) |
+| **GitOps** | `tests/gitops/` | Deploying apps via Git commits, testing ArgoCD sync |
+| **UI** | `tests/ui/` | Testing browser-based workflows (OAuth, dashboards) |
 
 ## Test Types
 
