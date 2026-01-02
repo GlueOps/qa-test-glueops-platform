@@ -20,7 +20,7 @@ from datetime import datetime
 @pytest.mark.ui
 @pytest.mark.write
 @pytest.mark.vault
-@pytest.mark.flaky(reruns=1, reruns_delay=60)
+@pytest.mark.flaky(reruns=1, reruns_delay=300)
 def test_vault_secrets(vault_test_secrets, authenticated_vault_page, captain_domain, screenshots, github_credentials):
     """Test Vault secrets creation and UI viewing.
     

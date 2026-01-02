@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.slow
 @pytest.mark.visual
 @pytest.mark.ui
-@pytest.mark.flaky(reruns=1, reruns_delay=60)
+@pytest.mark.flaky(reruns=1, reruns_delay=300)
 def test_cluster_info_links(authenticated_cluster_info_page, captain_domain, screenshots):
     """
     Test that all HTTPS links on cluster-info page are accessible.

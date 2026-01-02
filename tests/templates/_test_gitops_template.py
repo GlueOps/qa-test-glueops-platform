@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 @pytest.mark.gitops
 @pytest.mark.gitops_deployment  # or @pytest.mark.externalsecrets, @pytest.mark.letsencrypt
 @pytest.mark.captain_manifests
-@pytest.mark.flaky(reruns=1, reruns_delay=60)  # Retry once on failure (network issues, etc.)
+@pytest.mark.flaky(reruns=1, reruns_delay=300)  # Retry once on failure (network issues, etc.)
 def test_example_deployment(
     captain_manifests,
     ephemeral_github_repo,

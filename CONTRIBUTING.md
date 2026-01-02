@@ -152,7 +152,7 @@ Add one or more based on what's tested:
 - `@pytest.mark.authenticated` - Requires GitHub OAuth login
 - `@pytest.mark.visual` - Has visual regression baseline
 - `@pytest.mark.captain_manifests` - Uses `captain_manifests` fixture
-- `@pytest.mark.flaky(reruns=1, reruns_delay=60)` - Retry on failure
+- `@pytest.mark.flaky(reruns=1, reruns_delay=300)` - Retry on failure
 
 ---
 

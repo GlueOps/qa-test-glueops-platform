@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.authenticated
 @pytest.mark.visual
 @pytest.mark.ui
-@pytest.mark.flaky(reruns=1, reruns_delay=60)
+@pytest.mark.flaky(reruns=1, reruns_delay=300)
 def test_grafana_dashboard(authenticated_grafana_page, captain_domain, screenshots):
     """Test Grafana Kubernetes dashboard access.
     

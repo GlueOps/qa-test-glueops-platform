@@ -156,7 +156,7 @@ NAME_VARIATIONS = [
     "periods",
     "camelCase-numbers",
 ])
-@pytest.mark.flaky(reruns=1, reruns_delay=60)
+@pytest.mark.flaky(reruns=1, reruns_delay=300)
 def test_pull_request_environment(
     repo_name: str,
     branch_name: str,

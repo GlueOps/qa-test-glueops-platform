@@ -19,7 +19,7 @@ import pytest
         ("cluster-info", "cluster-info"),
     ],
 )
-@pytest.mark.flaky(reruns=1, reruns_delay=60)
+@pytest.mark.flaky(reruns=1, reruns_delay=300)
 def test_oauth_redirect_to_github(page, captain_domain, screenshots, service_name, url_path):
     """
     Test that service redirects to GitHub OAuth login in incognito mode.

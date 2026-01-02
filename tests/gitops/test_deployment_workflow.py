@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 @pytest.mark.gitops
 @pytest.mark.gitops_deployment
 @pytest.mark.captain_manifests
-@pytest.mark.flaky(reruns=1, reruns_delay=60)
+@pytest.mark.flaky(reruns=1, reruns_delay=300)
 def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
     """
     Test GitOps deployment workflow with custom repository.
