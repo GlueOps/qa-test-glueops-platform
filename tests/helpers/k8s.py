@@ -711,9 +711,9 @@ def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1
     """
     Validate DNS resolution for Ingress hosts.
     
-    For each ingress with a load balancer IP:
-    - Queries DNS A records for each host using specified DNS server
-    - Compares resolved IPs against expected load balancer IPs
+    For each ingress with a load balancer:
+    - If LB has IP: Queries DNS A records and compares resolved IPs
+    - If LB has hostname: Queries DNS CNAME records and validates CNAME points to LB hostname
     
     Args:
         networking_v1: Kubernetes NetworkingV1Api client
@@ -736,17 +736,24 @@ def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1
         for ingress in ingresses.items:
             name = f"{namespace}/{ingress.metadata.name}"
             
-            # Get expected IPs from load balancer
+            # Get expected IPs or hostnames from load balancer
             if not ingress.status or not ingress.status.load_balancer or not ingress.status.load_balancer.ingress:
                 continue
             
             expected_ips = []
+            expected_hostnames = []
             for lb in ingress.status.load_balancer.ingress:
                 if lb.ip:
                     expected_ips.append(lb.ip)
+                if lb.hostname:
+                    expected_hostnames.append(lb.hostname)
             
-            if not expected_ips:
+            # Skip if no IPs or hostnames found
+            if not expected_ips and not expected_hostnames:
                 continue
+            
+            # Determine validation mode: CNAME for hostnames, A records for IPs
+            use_cname_validation = bool(expected_hostnames) and not expected_ips
             
             # Check each host
             if not ingress.spec or not ingress.spec.rules:
@@ -759,26 +766,50 @@ def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1
                 checked_count += 1
                 host = rule.host
                 
-                try:
-                    answers = resolver.resolve(host, 'A')
-                    resolved_ips = [str(rdata) for rdata in answers]
-                    
-                    # Check if any resolved IP matches expected
-                    if not any(ip in expected_ips for ip in resolved_ips):
-                        problems.append(f"{name} ({host}): Resolves to {resolved_ips}, expected {expected_ips}")
-                        logger.info(f"  ✗ {host}: {resolved_ips} (expected {expected_ips})")
-                    else:
-                        logger.info(f"  ✓ {host}: {resolved_ips[0]}")
+                if use_cname_validation:
+                    # Validate CNAME points to load balancer hostname (AWS ELB/ALB/NLB)
+                    try:
+                        answers = resolver.resolve(host, 'CNAME')
+                        cname_targets = [str(rdata.target).rstrip('.') for rdata in answers]
                         
-                except dns.resolver.NXDOMAIN:
-                    problems.append(f"{name} ({host}): NXDOMAIN (does not exist)")
-                    logger.info(f"  ✗ {host}: NXDOMAIN")
-                except dns.resolver.NoAnswer:
-                    problems.append(f"{name} ({host}): No A records")
-                    logger.info(f"  ✗ {host}: No A records")
-                except Exception as e:
-                    problems.append(f"{name} ({host}): DNS error - {e}")
-                    logger.info(f"  ✗ {host}: {e}")
+                        # Check if any CNAME matches expected hostname
+                        if any(cname in expected_hostnames or any(cname == expected.rstrip('.') for expected in expected_hostnames) for cname in cname_targets):
+                            logger.info(f"  ✓ {host}: CNAME → {cname_targets[0]}")
+                        else:
+                            problems.append(f"{name} ({host}): CNAME points to {cname_targets}, expected {expected_hostnames}")
+                            logger.info(f"  ✗ {host}: CNAME → {cname_targets} (expected {expected_hostnames})")
+                            
+                    except dns.resolver.NXDOMAIN:
+                        problems.append(f"{name} ({host}): NXDOMAIN (does not exist)")
+                        logger.info(f"  ✗ {host}: NXDOMAIN")
+                    except dns.resolver.NoAnswer:
+                        problems.append(f"{name} ({host}): No CNAME records")
+                        logger.info(f"  ✗ {host}: No CNAME records")
+                    except Exception as e:
+                        problems.append(f"{name} ({host}): DNS error - {e}")
+                        logger.info(f"  ✗ {host}: {e}")
+                else:
+                    # Validate A record points to load balancer IP (GCP, K3d)
+                    try:
+                        answers = resolver.resolve(host, 'A')
+                        resolved_ips = [str(rdata) for rdata in answers]
+                        
+                        # Check if any resolved IP matches expected
+                        if not any(ip in expected_ips for ip in resolved_ips):
+                            problems.append(f"{name} ({host}): Resolves to {resolved_ips}, expected {expected_ips}")
+                            logger.info(f"  ✗ {host}: A → {resolved_ips} (expected {expected_ips})")
+                        else:
+                            logger.info(f"  ✓ {host}: A → {resolved_ips[0]}")
+                            
+                    except dns.resolver.NXDOMAIN:
+                        problems.append(f"{name} ({host}): NXDOMAIN (does not exist)")
+                        logger.info(f"  ✗ {host}: NXDOMAIN")
+                    except dns.resolver.NoAnswer:
+                        problems.append(f"{name} ({host}): No A records")
+                        logger.info(f"  ✗ {host}: No A records")
+                    except Exception as e:
+                        problems.append(f"{name} ({host}): DNS error - {e}")
+                        logger.info(f"  ✗ {host}: {e}")
     
     if not problems:
         logger.info(f"  All {checked_count} hosts resolve correctly")
@@ -789,6 +820,9 @@ def validate_ingress_dns(networking_v1, platform_namespaces, dns_server='1.1.1.1
 def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=None, fail_on_none=False):
     """
     Get the load balancer IP from ingresses matching the specified class.
+    
+    Supports both direct IP addresses (GCP, K3d) and hostnames (AWS ELB/ALB/NLB).
+    When a hostname is found, it will be resolved to an IP address.
     
     Args:
         networking_v1: Kubernetes NetworkingV1Api client
@@ -816,11 +850,25 @@ def get_ingress_load_balancer_ip(networking_v1, ingress_class_name, namespace=No
                 ingress.status.load_balancer.ingress):
                 
                 for lb in ingress.status.load_balancer.ingress:
+                    # Check for direct IP (GCP, K3d)
                     if lb.ip:
                         logger.info(f"✓ Found load balancer IP: {lb.ip}")
                         return lb.ip
+                    
+                    # Check for hostname (AWS ELB/ALB/NLB) and resolve to IP
+                    if lb.hostname:
+                        try:
+                            resolved_ip = socket.gethostbyname(lb.hostname)
+                            logger.info(f"✓ Resolved load balancer hostname {lb.hostname} → {resolved_ip}")
+                            return resolved_ip
+                        except socket.gaierror as dns_error:
+                            logger.error(f"Failed to resolve load balancer hostname {lb.hostname}: {dns_error}")
+                            if fail_on_none:
+                                import pytest
+                                pytest.fail(f"Failed to resolve load balancer hostname {lb.hostname}: {dns_error}")
+                            return None
         
-        logger.warning(f"No load balancer IP found for ingressClassName: {ingress_class_name}")
+        logger.warning(f"No load balancer IP or hostname found for ingressClassName: {ingress_class_name}")
         
         if fail_on_none:
             import pytest
