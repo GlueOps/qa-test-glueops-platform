@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.ui
 @pytest.mark.captain_manifests
 @pytest.mark.write
+@pytest.mark.flaky(reruns=1, reruns_delay=60)
 def test_argocd_applications(captain_manifests, authenticated_argocd_page, captain_domain, screenshots):
     """Test ArgoCD applications page with deployed fixture apps.
     

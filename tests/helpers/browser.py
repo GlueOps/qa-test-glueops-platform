@@ -335,7 +335,7 @@ class ScreenshotManager:
         full_page: bool = True,
         baseline_key: Optional[str] = None,
         threshold: Optional[float] = None,
-        always_generate_diff: bool = False
+        always_generate_diff: bool = True
     ) -> Path:
         """
         Capture screenshot with optional visual regression baseline comparison.

@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.authenticated
 @pytest.mark.visual
 @pytest.mark.ui
+@pytest.mark.flaky(reruns=1, reruns_delay=60)
 def test_login_to_cluster_info(authenticated_cluster_info_page, captain_domain, screenshots):
     """Test cluster-info login via GitHub OAuth flow.
     

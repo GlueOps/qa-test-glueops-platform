@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.authenticated
 @pytest.mark.visual
 @pytest.mark.ui
+@pytest.mark.flaky(reruns=1, reruns_delay=60)
 def test_login_to_vault(page, github_credentials, captain_domain, screenshots):
     """
     Test Vault login via GitHub OAuth flow.

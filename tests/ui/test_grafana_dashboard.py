@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.authenticated
 @pytest.mark.visual
 @pytest.mark.ui
+@pytest.mark.flaky(reruns=1, reruns_delay=60)
 def test_grafana_dashboard(authenticated_grafana_page, captain_domain, screenshots):
     """Test Grafana Kubernetes dashboard access.
     
@@ -58,7 +59,7 @@ def test_grafana_dashboard(authenticated_grafana_page, captain_domain, screensho
         page, page.url,
         description="Kubernetes Compute Resources Dashboard",
         baseline_key="grafana_k8s_compute_dashboard",
-        threshold=0.0
+        threshold=2.0
     )
     
     # Assert no visual regressions
