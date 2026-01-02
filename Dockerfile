@@ -8,8 +8,12 @@ ARG KUBECTL_SHA256=a2e984a18a0c063279d692533031c1eff93a262afcc0afdc517375432d060
 WORKDIR /app
 
 # Install kubectl for port-forwarding, libzbar for QR code decoding, and build deps for Pillow and numpy
+# Also install AWS CLI v2 for EKS authentication
 RUN apt-get update && apt-get install -y \
     curl \
+    unzip \
+    groff \
+    less \
     libzbar0 \
     zlib1g-dev \
     libjpeg-dev \
@@ -21,6 +25,10 @@ RUN apt-get update && apt-get install -y \
     echo "${KUBECTL_SHA256}  kubectl" | sha256sum -c - && \
     install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl && \
     rm kubectl && \
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf aws awscliv2.zip && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install requirements
