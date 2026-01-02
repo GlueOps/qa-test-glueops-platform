@@ -127,7 +127,7 @@ report: setup-allure
 	@docker run --rm \
 		-v "$$(pwd)/allure-results:/allure-results:ro" \
 		-v "$$(pwd)/allure-single-file:/allure-single-file" \
-		frankescobar/allure-docker-service \
+		frankescobar/allure-docker-service@sha256:4154286c02096d42cc56d65e6bb786d9710da9aa4f0e6e8a29af0ca909b0faf0 \
 		allure generate /allure-results -o /allure-single-file --single-file --clean
 	@mv allure-single-file/index.html allure-single-file/report-$(REPORT_TS).html
 	@echo "✅ Report generated: allure-single-file/report-$(REPORT_TS).html"
