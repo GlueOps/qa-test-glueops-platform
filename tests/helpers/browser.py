@@ -8,6 +8,7 @@ import os
 import logging
 import pyotp
 import uuid
+import base64
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
@@ -143,23 +144,39 @@ def get_browser_connection():
             api_key = os.environ["BROWSERBASE_API_KEY"]
             project_id = os.environ["BROWSERBASE_PROJECT_ID"]
             
+            log.info("Creating BrowserBase session...")
+            
+            # Session configuration
+            session_config = {
+                "projectId": project_id,
+                "browserSettings": {
+                    "viewport": {
+                        "width": 1920,
+                        "height": 1080
+                    }
+                }
+            }
+            
             response = requests.post(
                 "https://www.browserbase.com/v1/sessions",
                 headers={
                     "x-bb-api-key": api_key,
                     "Content-Type": "application/json"
                 },
-                json={"projectId": project_id}
+                json=session_config,
+                timeout=30  # 30 second timeout for API call
             )
             response.raise_for_status()
             session_data = response.json()
+            log.info(f"Session created: {session_data.get('id', 'unknown')}")
             
             session_id = session_data["id"]
             connect_url = f"wss://connect.browserbase.com?apiKey={api_key}&sessionId={session_id}"
             
+            log.info(f"Connecting to BrowserBase via CDP: {session_id}...")
             browser = p.chromium.connect_over_cdp(connect_url)
             
-            log.info("🎥 BrowserBase Session Created!")
+            log.info("🎥 BrowserBase Session Connected!")
             log.info(f"   Session ID: {session_id}")
             log.info(f"   View recording: https://www.browserbase.com/sessions/{session_id}")
             
@@ -191,10 +208,11 @@ def create_incognito_context(browser: Browser) -> BrowserContext:
     context = browser.new_context(
         ignore_https_errors=False,
         accept_downloads=False,
-        user_agent=None
+        user_agent=None,
+        viewport={"width": 1920, "height": 1080}
     )
     
-    log.info("✅ Fresh context created - no cookies or session data")
+    log.info("✅ Fresh context created with 1920x1080 viewport - no cookies or session data")
     return context
 
 
@@ -270,7 +288,7 @@ def log_browserbase_session(session):
 
 def take_screenshot(page: Page, description: str, attach_screenshot_fn) -> Path:
     """
-    Take a screenshot and attach it to the test report.
+    Take a screenshot using CDP for optimal performance and attach it to the test report.
     
     Args:
         page: Playwright page instance
@@ -282,7 +300,19 @@ def take_screenshot(page: Page, description: str, attach_screenshot_fn) -> Path:
     """
     screenshot_path = Path("./reports/screenshots") / f"{description.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
     screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(screenshot_path), full_page=True)
+    
+    # Use CDP for optimal screenshot performance
+    client = page.context.new_cdp_session(page)
+    try:
+        result = client.send("Page.captureScreenshot", {
+            "format": "png",
+            "captureBeyondViewport": True  # Full page capture
+        })
+        screenshot_bytes = base64.b64decode(result["data"])
+        screenshot_path.write_bytes(screenshot_bytes)
+    finally:
+        client.detach()
+    
     attach_screenshot_fn(screenshot_path, f"SCREENSHOT: {description}")
     return screenshot_path
 
@@ -377,8 +407,19 @@ class ScreenshotManager:
         
         screenshot_path = self.screenshots_dir / screenshot_filename
         
-        log.info(f"📸 Capturing screenshot: {screenshot_filename}")
-        screenshot_bytes = page.screenshot(path=str(screenshot_path), full_page=full_page)
+        log.info(f"📸 Capturing screenshot using CDP: {screenshot_filename}")
+        
+        # Use CDP for optimal screenshot performance
+        client = page.context.new_cdp_session(page)
+        try:
+            result = client.send("Page.captureScreenshot", {
+                "format": "png",
+                "captureBeyondViewport": full_page  # Full page capture when requested
+            })
+            screenshot_bytes = base64.b64decode(result["data"])
+            screenshot_path.write_bytes(screenshot_bytes)
+        finally:
+            client.detach()
         
         desc = description or url
         self.screenshots.append((screenshot_filename, url, desc))

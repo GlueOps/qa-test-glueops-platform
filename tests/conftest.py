@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import logging
+import base64
 from pathlib import Path
 import allure
 
@@ -134,8 +135,18 @@ def pytest_runtest_makereport(item, call):
             screenshot_filename = f"{test_name}_FINAL_{status}_{timestamp}.png"
             screenshot_path = screenshots_dir / screenshot_filename
             
-            # Capture screenshot and attach to Allure report
-            screenshot_bytes = page.screenshot(path=str(screenshot_path))
+            # Use CDP for optimal screenshot performance
+            client = page.context.new_cdp_session(page)
+            try:
+                result = client.send("Page.captureScreenshot", {
+                    "format": "png",
+                    "captureBeyondViewport": True  # Full page capture
+                })
+                screenshot_bytes = base64.b64decode(result["data"])
+                screenshot_path.write_bytes(screenshot_bytes)
+            finally:
+                client.detach()
+            
             allure.attach(
                 screenshot_bytes,
                 name=f"Final Screenshot: {status}",

@@ -35,7 +35,7 @@ def generate_random_secrets(num_keys=5):
 @pytest.mark.externalsecrets
 @pytest.mark.captain_manifests
 @pytest.mark.vault
-@pytest.mark.flaky(reruns=1, reruns_delay=300)
+@pytest.mark.flaky(reruns=0, reruns_delay=300)
 def test_externalsecrets_vault_integration(vault_test_secrets, captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
     """
     Test External Secrets Operator integration with Vault.
