@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 @pytest.mark.ui
 @pytest.mark.authenticated
 @pytest.mark.visual  # Has visual regression baseline
-@pytest.mark.flaky(reruns=1, reruns_delay=300)  # Retry once on failure
+@pytest.mark.flaky(reruns=0, reruns_delay=300)  # Retry once on failure
 def test_example_authenticated_page(authenticated_argocd_page, captain_domain, screenshots):
     """
     Test authenticated access to a service via GitHub OAuth.
