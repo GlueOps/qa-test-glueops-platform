@@ -31,4 +31,4 @@ types-requests==2.32.4.20250913  # Type stubs for requests library
 
 # Visual regression testing
 pixelmatch==0.3.0          # Fast pixel-level image comparison
-numpy==2.2.6               # Image array processing for pixelmatch
+numpy==2.4.2               # Image array processing for pixelmatch
