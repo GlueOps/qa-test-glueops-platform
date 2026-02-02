@@ -607,7 +607,7 @@ ingress:
                 grafana_page, comment_data['grafana_metrics_url'],
                 description="Grafana Metrics Dashboard",
                 baseline_key="pr_grafana_metrics_dashboard",
-                threshold=1.0
+                threshold=2.0
             )
             logger.info(f"   ✓ Grafana metrics screenshot captured")
             

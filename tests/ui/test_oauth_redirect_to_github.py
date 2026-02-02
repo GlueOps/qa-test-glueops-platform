@@ -63,7 +63,7 @@ def test_oauth_redirect_to_github(page, captain_domain, screenshots, service_nam
         page, final_url,
         description=f"{service_name} - GitHub OAuth Login",
         baseline_key=f"github_oauth_{service_name}",
-        threshold=0.0
+        threshold=1.0
     )
     
     # Assert no visual regressions

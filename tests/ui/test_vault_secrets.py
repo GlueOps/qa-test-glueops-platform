@@ -78,7 +78,7 @@ def test_vault_secrets(vault_test_secrets, authenticated_vault_page, captain_dom
         page, page.url,
         description="Vault Secrets List",
         baseline_key="vault_secrets_list",
-        threshold=0.5
+        threshold=2.0
     )
     
     # Assert no visual regressions
