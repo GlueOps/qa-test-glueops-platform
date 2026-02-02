@@ -13,7 +13,7 @@ pytest-timeout==2.4.0      # Timeout handling
 pytest-rerunfailures==16.1 # Automatic retry for flaky tests
 
 # UI Testing
-playwright==1.57.0
+playwright==1.58.0
 pyotp==2.9.0               # TOTP 2FA for GitHub login
 # Note: BrowserBase uses REST API (via requests) - no SDK needed
 
