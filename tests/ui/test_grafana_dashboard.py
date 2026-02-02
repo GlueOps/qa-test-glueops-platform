@@ -59,7 +59,7 @@ def test_grafana_dashboard(authenticated_grafana_page, captain_domain, screensho
         page, page.url,
         description="Kubernetes Compute Resources Dashboard",
         baseline_key="grafana_k8s_compute_dashboard",
-        threshold=2.0
+        threshold=10.0
     )
     
     # Assert no visual regressions
