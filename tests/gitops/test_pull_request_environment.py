@@ -489,6 +489,12 @@ ingress:
             request=request
         )
         
+        # Enable baseline update mode if flag set
+        update_baseline = request.config.getoption("--update-baseline")
+        if update_baseline and (update_baseline == "all" or update_baseline in request.node.name):
+            screenshot_manager.update_baseline_mode = True
+            logger.info(f"📝 Baseline update mode enabled for {request.node.name}")
+        
         # Track contexts for cleanup
         contexts_to_close = []
         
