@@ -1,4 +1,4 @@
-kubernetes==34.1.0
+kubernetes==35.0.0
 hvac==2.4.0
 dnspython==2.8.0
 requests==2.32.5
