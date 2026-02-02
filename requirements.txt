@@ -27,7 +27,7 @@ PyGithub==2.8.1            # GitHub API client for GitOps tests
 # Static analysis and code quality
 mypy==1.19.1               # Static type checking
 pylint==4.0.4              # Code linting
-types-requests==2.32.4.20250913  # Type stubs for requests library
+types-requests==2.32.4.20260107  # Type stubs for requests library
 
 # Visual regression testing
 pixelmatch==0.3.0          # Fast pixel-level image comparison
