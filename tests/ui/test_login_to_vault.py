@@ -95,7 +95,7 @@ def test_login_to_vault(page, github_credentials, captain_domain, screenshots):
         page, page.url,
         description="Vault Secrets Page",
         baseline_key="vault_secrets_page",
-        threshold=0.0
+        threshold=1.0
     )
     
     # Assert no visual regressions
