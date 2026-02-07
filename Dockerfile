@@ -1,4 +1,4 @@
-FROM python:3.14.2-slim@sha256:9b81fe9acff79e61affb44aaf3b6ff234392e8ca477cb86c9f7fd11732ce9b6a
+FROM python:3.14.3-slim@sha256:f7d955e94c5750e0dc1ff69a38b80a9e5676289acb4fdfb3fe1dad9c6c0d43f4
 
 # Pinned kubectl version and checksum for reproducible builds
 # To update: get new checksum from https://dl.k8s.io/release/vX.Y.Z/bin/linux/amd64/kubectl.sha256
