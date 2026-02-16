@@ -18,7 +18,7 @@ pyotp==2.9.0               # TOTP 2FA for GitHub login
 # Note: BrowserBase uses REST API (via requests) - no SDK needed
 
 # QR Code validation
-Pillow==12.1.0             # Image processing for QR code decoding
+Pillow==12.1.1             # Image processing for QR code decoding
 pyzbar==0.1.9              # QR code decoding library
 
 # GitHub API
