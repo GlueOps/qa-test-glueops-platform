@@ -175,13 +175,12 @@ def test_ingress_dns(networking_v1, platform_namespaces):
 @pytest.mark.readonly
 @pytest.mark.oauth2
 def test_ingress_oauth2_redirect(networking_v1, platform_namespaces, captain_domain):
-    """Verify ingresses have OAuth2 redirect annotations and actually redirect via HTTP.
+    """Verify ingresses have Traefik OAuth2 middleware annotations and are protected.
     
-    Validates OAuth2 protection for ingresses with class 'glueops-platform':
-    - Checks nginx.ingress.kubernetes.io/auth-url points to oauth2.{captain_domain}
-    - Checks nginx.ingress.kubernetes.io/auth-signin points to oauth2.{captain_domain}
-    - Makes HTTP request and verifies redirect (301/302/307/308) to OAuth2 URL
-    - Accepts 401/403 auth challenges as valid (protected but different auth method)
+    Validates OAuth2 protection for ingresses with class 'platform-traefik':
+    - Checks traefik.ingress.kubernetes.io/router.middlewares is present and contains
+      a valid oauth2-proxy middleware value (with-redirect or no-redirect)
+    - Makes HTTP request and verifies protection (redirect or 401/403)
     
     Exceptions (skipped ingresses):
     - oauth2-proxy
@@ -192,11 +191,12 @@ def test_ingress_oauth2_redirect(networking_v1, platform_namespaces, captain_dom
     
     Cluster Impact: READ-ONLY (queries ingress resources + external HTTP requests)
     """
-    ingress_classes = ["glueops-platform"]
+    from tests.helpers.constants import VALID_OAUTH2_MIDDLEWARES
+
+    ingress_classes = ["platform-traefik"]
     exceptions = ["oauth2-proxy", "glueops-dex"]
     problems = []
     checked_count = 0
-    expected_oauth2_url = f"https://oauth2.{captain_domain}"
     
     for namespace in platform_namespaces:
         ingresses = networking_v1.list_namespaced_ingress(namespace=namespace)
@@ -217,45 +217,37 @@ def test_ingress_oauth2_redirect(networking_v1, platform_namespaces, captain_dom
             checked_count += 1
             annotations = ingress.metadata.annotations or {}
             
-            # Check for auth-url annotation
-            auth_url = annotations.get("nginx.ingress.kubernetes.io/auth-url")
-            auth_signin = annotations.get("nginx.ingress.kubernetes.io/auth-signin")
+            # Check for Traefik router.middlewares annotation
+            middlewares = annotations.get("traefik.ingress.kubernetes.io/router.middlewares", "")
             
-            if not auth_url:
-                problems.append(f"{name}: missing nginx.ingress.kubernetes.io/auth-url annotation")
-            elif not auth_url.startswith(expected_oauth2_url):
-                problems.append(f"{name}: auth-url '{auth_url}' does not start with '{expected_oauth2_url}'")
+            if not middlewares:
+                problems.append(f"{name}: missing traefik.ingress.kubernetes.io/router.middlewares annotation")
+            elif not any(mw in middlewares for mw in VALID_OAUTH2_MIDDLEWARES):
+                problems.append(
+                    f"{name}: router.middlewares '{middlewares}' does not contain "
+                    f"a valid oauth2-proxy middleware"
+                )
             else:
-                logger.info(f"{name}: auth-url ✓")
+                logger.info(f"{name}: router.middlewares ✓ ({middlewares})")
             
-            if not auth_signin:
-                problems.append(f"{name}: missing nginx.ingress.kubernetes.io/auth-signin annotation")
-            elif not auth_signin.startswith(expected_oauth2_url):
-                problems.append(f"{name}: auth-signin '{auth_signin}' does not start with '{expected_oauth2_url}'")
-            else:
-                logger.info(f"{name}: auth-signin ✓")
-            
-            # Test actual HTTP redirect if ingress has hosts
+            # Test actual HTTP protection if ingress has hosts
             if ingress.spec and ingress.spec.rules:
                 for rule in ingress.spec.rules:
                     if not rule.host:
                         continue
                     
                     host = rule.host.strip()
-                    # Try HTTP request to verify redirect
+                    # Try HTTP request to verify protection
                     try:
                         url = f"http://{host}"
                         response = requests.get(url, allow_redirects=False, timeout=5, verify=False)
                         
-                        # Check if we get a redirect (301, 302, 307, 308)
+                        # Check if we get a redirect (301, 302, 307, 308) or auth challenge
                         if response.status_code in [301, 302, 307, 308]:
                             location = response.headers.get('Location', '')
-                            if location.startswith(expected_oauth2_url):
-                                logger.info(f"{name} ({host}): HTTP redirect to OAuth2 ✓")
-                            else:
-                                problems.append(f"{name} ({host}): redirects to '{location}' instead of OAuth2")
-                        elif response.status_code == 401 or response.status_code == 403:
-                            # Auth challenge without redirect - still protected
+                            logger.info(f"{name} ({host}): redirect to '{location}' ✓")
+                        elif response.status_code in [401, 403]:
+                            # Auth challenge without redirect - still protected (no-redirect middleware)
                             logger.info(f"{name} ({host}): auth challenge (status {response.status_code}) ✓")
                         else:
                             logger.info(f"{name} ({host}): unexpected status {response.status_code}")

@@ -17,6 +17,7 @@ from tests.helpers.k8s import validate_http_debug_app
 from tests.helpers.github import create_github_file
 from tests.helpers.argocd import wait_for_appset_apps_created_and_healthy, calculate_expected_app_count
 from tests.helpers.utils import print_section_header, print_summary_list
+from tests.helpers.constants import INGRESS_CLASS_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,8 @@ logger = logging.getLogger(__name__)
 @pytest.mark.gitops_deployment
 @pytest.mark.captain_manifests
 @pytest.mark.flaky(reruns=0, reruns_delay=300)
-def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
+@pytest.mark.parametrize("ingress_class_name", INGRESS_CLASS_NAMES)
+def test_create_custom_deployment_repo(ingress_class_name, captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
     """
     Test GitOps deployment workflow with custom repository.
     
@@ -75,7 +77,8 @@ def test_create_custom_deployment_repo(captain_manifests, ephemeral_github_repo,
                            replicas=2,
                            cpu='100m',
                            memory='128Mi',
-                           pdb_enabled='true')
+                           pdb_enabled='true',
+                           ingress_class_name=ingress_class_name)
     
     # Create 3 http-debug applications with dynamic GUIDs
     num_apps = 3

@@ -15,13 +15,13 @@ deployment:
       memory: 64Mi
 ingress:
   enabled: true
-  ingressClassName: public
+  ingressClassName: {ingress_class_name}
   entries:
     - name: public
       hosts:
         - hostname: {hostname}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt
+    cert-manager.io/cluster-issuer: {cluster_issuer}
   tls:
     - secretName: {app_name}
       hosts:

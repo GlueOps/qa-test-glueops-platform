@@ -44,6 +44,7 @@ from tests.helpers.browser import (
     ScreenshotManager,
 )
 from tests.helpers.utils import display_progress_bar, print_section_header
+from tests.helpers.constants import INGRESS_CLASS_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -156,8 +157,10 @@ NAME_VARIATIONS = [
     "periods",
     "camelCase-numbers",
 ])
+@pytest.mark.parametrize("ingress_class_name", INGRESS_CLASS_NAMES)
 @pytest.mark.flaky(reruns=0, reruns_delay=300)
 def test_pull_request_environment(
+    ingress_class_name: str,
     repo_name: str,
     branch_name: str,
     captain_manifests: dict,
@@ -205,9 +208,9 @@ def test_pull_request_environment(
     org_name = dest_match.group(1)
     
     # Get the registry hostname from the captain_manifests fixture
-    registry_app = captain_manifests['fixture_apps_by_friendly_name'].get('container-registry')
+    registry_app = captain_manifests['fixture_apps_by_friendly_name'].get(f'container-registry:{ingress_class_name}')
     if not registry_app:
-        pytest.fail("container-registry fixture app not found in captain_manifests")
+        pytest.fail(f"container-registry:{ingress_class_name} fixture app not found in captain_manifests")
     
     registry_hostname = registry_app['hostname']
     logger.info(f"Using in-cluster registry: {registry_hostname}")
@@ -287,7 +290,7 @@ podDisruptionBudget:
   enabled: true
 ingress:
   enabled: true
-  ingressClassName: public
+  ingressClassName: {ingress_class_name}
   entries:
     - name: public
       hosts:
