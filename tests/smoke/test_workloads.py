@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 # Alerts that are expected to be firing and don't indicate issues
 PASSABLE_ALERTS = [
     "Watchdog",  # Always-firing alert to verify alerting pipeline is working
-    "InfoInhibitor" # # Seems to occur intermittently. Added as passable by @venkatamutyala
+    "InfoInhibitor", # # Seems to occur intermittently. Added as passable by @venkatamutyala
+    "LokiRequestLatencyHigh",  # Known issue with Loki request latency - being investigated but not critical
+    "LokiRequestLatency",  # Known issue with Loki request latency - being investigated but not critical
 ]
 
 

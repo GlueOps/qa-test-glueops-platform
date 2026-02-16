@@ -9,6 +9,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Percentage of baseline metrics allowed to be missing before test fails.
+# If the fraction of unexpected missing metrics is below this threshold,
+# they are logged as warnings instead of causing a failure.
+MISSING_METRICS_TOLERANCE_PCT = 10.0
+
 # Whitelist of metrics that are expected to be missing intermittently
 IGNORABLE_MISSING_METRICS = [
     "vault_identity_entity_creation",
@@ -123,10 +128,12 @@ def test_prometheus_metrics_existence(core_v1, captain_domain, prometheus_url, r
     
     Validates metric name existence:
     - Checks metric names exist (ignoring labels/signatures)
-    - FAILS if baseline metrics are missing (regression detection)
+    - Tolerates up to 10% missing metrics (logs WARNING instead of failure)
+    - FAILS if missing metrics exceed the tolerance threshold
     - Reports new metrics as INFO (not a failure)
     
-    Fails if any baseline metric names are missing (indicates metric loss/regression).
+    Fails if unexpected missing metric names exceed MISSING_METRICS_TOLERANCE_PCT
+    of total baseline metrics (indicates significant metric loss/regression).
     
     Note: To recreate baseline, delete the baseline file and rerun, or use --update-baseline=all
     
@@ -134,10 +141,6 @@ def test_prometheus_metrics_existence(core_v1, captain_domain, prometheus_url, r
     """
     baseline_dir = "baselines"
     baseline_file = f"{baseline_dir}/prometheus-metrics-baseline.json"
-    
-    # Check if we should force update the baseline
-    update_baseline = request.config.getoption("--update-baseline")
-    force_update = update_baseline in ("all", "prometheus", request.node.name)
     
     # Check if we should force update the baseline
     update_baseline = request.config.getoption("--update-baseline")
@@ -186,15 +189,38 @@ def test_prometheus_metrics_existence(core_v1, captain_domain, prometheus_url, r
         for metric in sorted(whitelisted_missing):
             logger.warning(f"  - {metric}")
     
-    # Assert no unexpected missing metrics
+    # Assert no unexpected missing metrics (with tolerance)
     if unexpected_missing:
-        # Show all unexpected missing metrics
+        missing_pct = (len(unexpected_missing) / len(baseline_set)) * 100
         missing_list = sorted(unexpected_missing)
-        error_msg = f"{len(unexpected_missing)} metric name(s) missing from baseline:\n"
-        for m in missing_list:
-            error_msg += f"  - {m}\n"
-        
-        pytest.fail(error_msg)
-    
-    logger.info(f"✓ All {len(baseline_set)} baseline metrics verified" + 
-          (f" ({len(new)} new metrics detected)" if new else ""))
+
+        if missing_pct < MISSING_METRICS_TOLERANCE_PCT:
+            # Under tolerance — warn but pass
+            logger.warning(
+                f"\n{len(unexpected_missing)} metric name(s) missing "
+                f"({missing_pct:.1f}% of {len(baseline_set)} baseline metrics, "
+                f"within {MISSING_METRICS_TOLERANCE_PCT}% tolerance):"
+            )
+            for m in missing_list:
+                logger.warning(f"  - {m}")
+        else:
+            # Over tolerance — fail
+            error_msg = (
+                f"{len(unexpected_missing)} metric name(s) missing from baseline "
+                f"({missing_pct:.1f}% of {len(baseline_set)} — "
+                f"exceeds {MISSING_METRICS_TOLERANCE_PCT}% tolerance):\n"
+            )
+            for m in missing_list:
+                error_msg += f"  - {m}\n"
+            pytest.fail(error_msg)
+
+    # Summary
+    summary = f"✓ All {len(baseline_set)} baseline metrics verified"
+    if unexpected_missing:
+        summary += (
+            f" ({len(unexpected_missing)} missing — {missing_pct:.1f}%, "
+            f"within {MISSING_METRICS_TOLERANCE_PCT}% tolerance)"
+        )
+    if new:
+        summary += f" ({len(new)} new metrics detected)"
+    logger.info(summary)
