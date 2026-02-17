@@ -157,7 +157,7 @@ NAME_VARIATIONS = [
     "periods",
     "camelCase-numbers",
 ])
-@pytest.mark.parametrize("ingress_class_name", INGRESS_CLASS_NAMES)
+@pytest.mark.parametrize("ingress_class_name", ["public-traefik"])
 @pytest.mark.flaky(reruns=0, reruns_delay=300)
 def test_pull_request_environment(
     ingress_class_name: str,

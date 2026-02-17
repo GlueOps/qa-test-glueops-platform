@@ -147,6 +147,9 @@ def test_create_custom_deployment_repo(ingress_class_name, captain_manifests, ep
     
     # Validate JSON responses from each deployed application
     print_section_header("STEP 6: Validating deployed applications via HTTPS")
+    print_section_header("STEP 6.1: Waiting on external-dns to sync new ingresses and update DNS records")
+    import time
+    time.sleep(120)  # Wait for external-dns to sync new ingresses
     
     validation_errors = []
     

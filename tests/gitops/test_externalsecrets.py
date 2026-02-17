@@ -172,6 +172,9 @@ def test_externalsecrets_vault_integration(ingress_class_name, vault_test_secret
         platform_namespaces,
         dns_server='1.1.1.1'
     )
+    print_section_header("STEP 6.1: Wait 2mins for external-dns sync")
+    import time
+    time.sleep(120)  # Wait for external-dns to sync new ingresses and update DNS records
     
     # Validate environment variables from Vault
     print_section_header("STEP 7: Validating Environment Variables from Vault")
