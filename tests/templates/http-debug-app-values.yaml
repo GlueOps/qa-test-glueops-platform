@@ -15,7 +15,7 @@ deployment:
       memory: {memory}
 ingress:
   enabled: true
-  ingressClassName: public
+  ingressClassName: {ingress_class_name}
   entries:
     - name: public
       hosts:

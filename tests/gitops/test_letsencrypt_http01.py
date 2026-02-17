@@ -19,6 +19,7 @@ from tests.helpers.k8s import get_ingress_load_balancer_ip
 from tests.helpers.github import create_github_file
 from tests.helpers.argocd import wait_for_appset_apps_created_and_healthy, calculate_expected_app_count
 from tests.helpers.utils import print_section_header, print_summary_list
+from tests.helpers.constants import INGRESS_CLASS_NAMES, CLUSTER_ISSUER_BY_INGRESS_CLASS
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,8 @@ _reruns = max(0, _dns_services_count - 1)  # If 3 services, need 2 reruns
 @pytest.mark.gitops
 @pytest.mark.letsencrypt
 @pytest.mark.captain_manifests
-def test_letsencrypt_http01_challenge(captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
+@pytest.mark.parametrize("ingress_class_name", INGRESS_CLASS_NAMES)
+def test_letsencrypt_http01_challenge(ingress_class_name, captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
     """
     Test LetsEncrypt certificate issuance via HTTP01 challenge.
     
@@ -67,7 +69,7 @@ def test_letsencrypt_http01_challenge(captain_manifests, ephemeral_github_repo, 
     
     lb_ip = get_ingress_load_balancer_ip(
         networking_v1,
-        ingress_class_name='public',
+        ingress_class_name=ingress_class_name,
         
         fail_on_none=True
     )
@@ -81,9 +83,12 @@ def test_letsencrypt_http01_challenge(captain_manifests, ephemeral_github_repo, 
     from tests.templates import load_template
     
     def create_values_yaml(app_name, hostname):
+        cluster_issuer = CLUSTER_ISSUER_BY_INGRESS_CLASS[ingress_class_name]
         return load_template('letsencrypt-app-values.yaml', 
                            app_name=app_name, 
-                           hostname=hostname)
+                           hostname=hostname,
+                           ingress_class_name=ingress_class_name,
+                           cluster_issuer=cluster_issuer)
     
     # Create 3 applications with dynamic GUIDs
     num_apps = 3

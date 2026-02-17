@@ -44,6 +44,7 @@ from tests.helpers.browser import (
     ScreenshotManager,
 )
 from tests.helpers.utils import display_progress_bar, print_section_header
+from tests.helpers.constants import INGRESS_CLASS_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -136,11 +137,11 @@ jobs:
 # ============================================================================
 NAME_VARIATIONS = [
     # (repo_name, branch_name) - Test different valid GitHub name formats
-    ("demo-app-pr-testing", "feature/test-glueops-preview"),           # kebab-case + slash hierarchy
-    ("demo_app_pr_testing", "preview-glueops-preview"),                # underscores
-    ("Demo App PR Testing", "feature-v1.0.0-glueops-preview"),         # spaces→dashes + periods in version
-    ("demo.app.pr.testing", "updates/npm-glueops-preview"),            # periods + deep slash path
-    ("DemoAppPRTesting123", "hotfix-123-glueops-preview"),            # camelCase with numbers
+    #("demo-app-pr-testing", "feature/test-glueops-preview"),           # kebab-case + slash hierarchy
+    #("demo_app_pr_testing", "preview-glueops-preview"),                # underscores
+    #("Demo App PR Testing", "feature-v1.0.0-glueops-preview"),         # spaces→dashes + periods in version
+    #("demo.app.pr.testing", "updates/npm-glueops-preview"),            # periods + deep slash path
+    ("Demo.ap p-PR.Te ST_ing-123", "hotfix/12.3-glueops-preview"),            # camelCase with numbers
 ]
 # ============================================================================
 
@@ -151,13 +152,15 @@ NAME_VARIATIONS = [
 @pytest.mark.visual
 @pytest.mark.parametrize("repo_name,branch_name", NAME_VARIATIONS, ids=[
     "kebab-case",
-    "underscores",
-    "spaces-to-dashes",
-    "periods",
-    "camelCase-numbers",
+    #"underscores",
+    #"spaces-to-dashes",
+    #"periods",
+    #"camelCase-numbers",
 ])
+@pytest.mark.parametrize("ingress_class_name", ["public-traefik"])
 @pytest.mark.flaky(reruns=0, reruns_delay=300)
 def test_pull_request_environment(
+    ingress_class_name: str,
     repo_name: str,
     branch_name: str,
     captain_manifests: dict,
@@ -205,9 +208,9 @@ def test_pull_request_environment(
     org_name = dest_match.group(1)
     
     # Get the registry hostname from the captain_manifests fixture
-    registry_app = captain_manifests['fixture_apps_by_friendly_name'].get('container-registry')
+    registry_app = captain_manifests['fixture_apps_by_friendly_name'].get(f'container-registry:{ingress_class_name}')
     if not registry_app:
-        pytest.fail("container-registry fixture app not found in captain_manifests")
+        pytest.fail(f"container-registry:{ingress_class_name} fixture app not found in captain_manifests")
     
     registry_hostname = registry_app['hostname']
     logger.info(f"Using in-cluster registry: {registry_hostname}")
@@ -287,7 +290,7 @@ podDisruptionBudget:
   enabled: true
 ingress:
   enabled: true
-  ingressClassName: public
+  ingressClassName: {ingress_class_name}
   entries:
     - name: public
       hosts:

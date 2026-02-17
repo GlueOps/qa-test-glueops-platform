@@ -19,6 +19,7 @@ from tests.helpers.k8s import validate_whoami_env_vars
 from tests.helpers.github import create_github_file
 from tests.helpers.argocd import wait_for_appset_apps_created_and_healthy, calculate_expected_app_count
 from tests.helpers.utils import print_section_header, print_summary_list
+from tests.helpers.constants import INGRESS_CLASS_NAMES
 
 
 def generate_random_secrets(num_keys=5):
@@ -36,7 +37,8 @@ def generate_random_secrets(num_keys=5):
 @pytest.mark.captain_manifests
 @pytest.mark.vault
 @pytest.mark.flaky(reruns=0, reruns_delay=300)
-def test_externalsecrets_vault_integration(vault_test_secrets, captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
+@pytest.mark.parametrize("ingress_class_name", INGRESS_CLASS_NAMES)
+def test_externalsecrets_vault_integration(ingress_class_name, vault_test_secrets, captain_manifests, ephemeral_github_repo, custom_api, core_v1, networking_v1, platform_namespaces):
     """
     Test External Secrets Operator integration with Vault.
     
@@ -121,7 +123,8 @@ def test_externalsecrets_vault_integration(vault_test_secrets, captain_manifests
         file_path = f"apps/{app_name}/envs/prod/values.yaml"
         file_content = load_template('externalsecrets-app-values.yaml', 
                                      app_name=app_name, 
-                                     hostname=hostname)
+                                     hostname=hostname,
+                                     ingress_class_name=ingress_class_name)
         
         create_github_file(
             repo=repo,
@@ -169,6 +172,9 @@ def test_externalsecrets_vault_integration(vault_test_secrets, captain_manifests
         platform_namespaces,
         dns_server='1.1.1.1'
     )
+    print_section_header("STEP 6.1: Wait 2mins for external-dns sync")
+    import time
+    time.sleep(120)  # Wait for external-dns to sync new ingresses and update DNS records
     
     # Validate environment variables from Vault
     print_section_header("STEP 7: Validating Environment Variables from Vault")

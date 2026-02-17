@@ -40,6 +40,7 @@ from tests.helpers.manifests import (
 )
 from tests.templates import load_template
 from tests.helpers.github import delete_repos_by_topic
+from tests.helpers.constants import INGRESS_CLASS_NAMES
 
 
 logger = logging.getLogger(__name__)
@@ -138,20 +139,34 @@ class FixtureAppConfig(TypedDict, total=False):
     name: str
     replicas: int
     type: str
+    ingress_class: str
 
 
-# Fixture applications automatically deployed before tests run.
-# These are shared test utilities available to all tests.
-# Easy to add more by extending this list.
-FIXTURE_APP_CONFIGS: List[FixtureAppConfig] = [
+# Base fixture app definitions (before ingress class expansion).
+_BASE_FIXTURE_APP_CONFIGS: list[dict] = [
     {'name': 'fixture-http-debug-1', 'replicas': 2, 'type': 'http-debug'},
     {'name': 'fixture-http-debug-2', 'replicas': 2, 'type': 'http-debug'},
     {'name': 'fixture-http-debug-3', 'replicas': 2, 'type': 'http-debug'},
     {'name': 'container-registry', 'replicas': 1, 'type': 'registry'},
 ]
 
+# Fixture applications automatically deployed before tests run.
+# Expanded from base configs × ingress class names so each app is
+# deployed once per ingress class.
+FIXTURE_APP_CONFIGS: List[FixtureAppConfig] = [
+    {**config, 'ingress_class': ingress_class}
+    for config in _BASE_FIXTURE_APP_CONFIGS
+    for ingress_class in INGRESS_CLASS_NAMES
+]
 
-def _create_fixture_values_yaml(app_name: str, hostname: str, replicas: int, app_type: str = 'http-debug') -> str:
+
+def _create_fixture_values_yaml(
+    app_name: str,
+    hostname: str,
+    replicas: int,
+    app_type: str = 'http-debug',
+    ingress_class_name: str = 'public',
+) -> str:
     """Generate values.yaml for fixture application.
     
     Args:
@@ -159,6 +174,7 @@ def _create_fixture_values_yaml(app_name: str, hostname: str, replicas: int, app
         hostname: Full hostname for ingress (e.g., app.apps.example.com)
         replicas: Number of pod replicas to deploy
         app_type: Type of app ('http-debug' or 'registry')
+        ingress_class_name: Kubernetes IngressClass name (e.g., 'public', 'public-traefik')
         
     Returns:
         str: YAML content for values.yaml file
@@ -182,7 +198,7 @@ deployment:
       memory: 256Mi
 ingress:
   enabled: true
-  ingressClassName: public
+  ingressClassName: {ingress_class_name}
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "0"
   entries:
@@ -199,7 +215,8 @@ podDisruptionBudget:
                            replicas=replicas,
                            cpu='100m',
                            memory='128Mi',
-                           pdb_enabled='true')
+                           pdb_enabled='true',
+                           ingress_class_name=ingress_class_name)
 
 
 def _deploy_fixture_apps(
@@ -232,17 +249,22 @@ def _deploy_fixture_apps(
         app_name_base: str = config['name']
         replicas: int = config['replicas']
         app_type: str = config.get('type', 'http-debug')
+        ingress_class: str = config.get('ingress_class', 'public')
         guid = str(uuid.uuid4())[:8]
-        app_name = f"{app_name_base}-{guid}"
+        app_name = f"{app_name_base}-{ingress_class}-{guid}"
         hostname = f"{app_name}.apps.{captain_domain}"
         
         logger.info(f"\n📦 Creating fixture app: {app_name}")
         logger.info(f"   Friendly name: {app_name_base}")
+        logger.info(f"   Ingress class: {ingress_class}")
         logger.info(f"   GUID: {guid}")
         logger.info(f"   Hostname: {hostname}")
         
         # Create directory structure
-        values_yaml = _create_fixture_values_yaml(app_name, hostname, replicas, app_type)
+        values_yaml = _create_fixture_values_yaml(
+            app_name, hostname, replicas, app_type,
+            ingress_class_name=ingress_class,
+        )
         
         create_github_file(
             ephemeral_github_repo,
@@ -259,16 +281,19 @@ def _deploy_fixture_apps(
         )
         
         # Store metadata with friendly name and GUID for lookups
+        # Friendly-name key includes ingress class for unique lookups.
+        friendly_key = f"{app_name_base}:{ingress_class}"
         app_metadata = {
             'name': app_name,
             'friendly_name': app_name_base,
+            'ingress_class': ingress_class,
             'guid': guid,
             'hostname': hostname,
             'replicas': replicas
         }
         
         fixture_apps_metadata.append(app_metadata)
-        fixture_apps_by_friendly_name[app_name_base] = app_metadata
+        fixture_apps_by_friendly_name[friendly_key] = app_metadata
         
         logger.info(f"   ✓ Created manifests for {app_name}")
     
@@ -481,8 +506,8 @@ def captain_manifests(
             for app in captain_manifests['fixture_apps']:
                 print(app['name'], app['hostname'])
             
-            # Look up by friendly name
-            app = captain_manifests['fixture_apps_by_friendly_name']['fixture-http-debug-1']
+            # Look up by friendly name and ingress class
+            app = captain_manifests['fixture_apps_by_friendly_name']['fixture-http-debug-1:public']
             unique_name = app['name']  # Gets the full name with GUID
     """
     # Get marker options

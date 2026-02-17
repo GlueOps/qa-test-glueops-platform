@@ -436,14 +436,14 @@ class ScreenshotManager:
         if baseline_key is not None:
             # threshold is guaranteed to be float here due to validation above
             assert threshold is not None, "threshold validated above"
-            result = self._compare_to_baseline(
+            comparison_result = self._compare_to_baseline(
                 screenshot_path, 
                 baseline_key, 
                 threshold, 
                 desc,
                 always_generate_diff
             )
-            self.visual_results.append(result)
+            self.visual_results.append(comparison_result)
         
         return screenshot_path.absolute()
     

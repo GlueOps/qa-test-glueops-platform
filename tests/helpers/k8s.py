@@ -1328,7 +1328,7 @@ def validate_http_debug_app(url, expected_hostname, app_name=None, max_retries=3
             # Validate expected fields
             validations = {
                 'hostname': (None, 'hostname', expected_hostname),
-                'x-scheme': ('headers', 'x-scheme', 'https'),
+                'x-scheme': ('headers', 'x-forwarded-port', '443'),
                 'x-forwarded-proto': ('headers', 'x-forwarded-proto', 'https')
             }
             
