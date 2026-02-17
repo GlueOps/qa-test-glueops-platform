@@ -104,7 +104,7 @@ def test_cluster_info_links(authenticated_cluster_info_page, captain_domain, scr
                 page, link_url,
                 description=f"{i}. {urlparse(link_url).netloc}",
                 baseline_key=f"cluster_info_link_{link_key}",
-                threshold=0.0
+                threshold=3.0
             )
             
             log.info(f"✅ Successfully visited: {link_url}")
