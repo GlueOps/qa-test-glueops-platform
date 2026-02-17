@@ -137,11 +137,11 @@ jobs:
 # ============================================================================
 NAME_VARIATIONS = [
     # (repo_name, branch_name) - Test different valid GitHub name formats
-    ("demo-app-pr-testing", "feature/test-glueops-preview"),           # kebab-case + slash hierarchy
-    ("demo_app_pr_testing", "preview-glueops-preview"),                # underscores
-    ("Demo App PR Testing", "feature-v1.0.0-glueops-preview"),         # spaces→dashes + periods in version
-    ("demo.app.pr.testing", "updates/npm-glueops-preview"),            # periods + deep slash path
-    ("DemoAppPRTesting123", "hotfix-123-glueops-preview"),            # camelCase with numbers
+    #("demo-app-pr-testing", "feature/test-glueops-preview"),           # kebab-case + slash hierarchy
+    #("demo_app_pr_testing", "preview-glueops-preview"),                # underscores
+    #("Demo App PR Testing", "feature-v1.0.0-glueops-preview"),         # spaces→dashes + periods in version
+    #("demo.app.pr.testing", "updates/npm-glueops-preview"),            # periods + deep slash path
+    ("Demo.ap p-PR.Te ST_ing-123", "hotfix/12.3-glueops-preview"),            # camelCase with numbers
 ]
 # ============================================================================
 
@@ -152,10 +152,10 @@ NAME_VARIATIONS = [
 @pytest.mark.visual
 @pytest.mark.parametrize("repo_name,branch_name", NAME_VARIATIONS, ids=[
     "kebab-case",
-    "underscores",
-    "spaces-to-dashes",
-    "periods",
-    "camelCase-numbers",
+    #"underscores",
+    #"spaces-to-dashes",
+    #"periods",
+    #"camelCase-numbers",
 ])
 @pytest.mark.parametrize("ingress_class_name", ["public-traefik"])
 @pytest.mark.flaky(reruns=0, reruns_delay=300)
