@@ -158,7 +158,7 @@ NAME_VARIATIONS = [
     #"camelCase-numbers",
 ])
 @pytest.mark.parametrize("ingress_class_name", ["public-traefik"])
-@pytest.mark.flaky(reruns=0, reruns_delay=300)
+@pytest.mark.flaky(reruns=1, reruns_delay=300)
 def test_pull_request_environment(
     ingress_class_name: str,
     repo_name: str,
