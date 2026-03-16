@@ -242,19 +242,24 @@ def assert_tls_secrets_valid(core_v1, secret_info_list, namespace='nonprod'):
     return cert_infos
 
 
-def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validate_app=False):
+def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validate_app=False, max_retries=3, retry_delay=60):
     """
     Validate multiple HTTPS endpoints and fail test if any are invalid.
+    
+    Retries each endpoint on SSL errors to handle ingress controller TLS reload delays.
     
     Args:
         endpoint_info_list: List of dicts with 'name', 'hostname', and 'url' keys
         validate_cert: Whether to validate HTTPS certificate (default: True)
         validate_app: Whether to validate http-debug app response (default: False)
+        max_retries: Number of attempts per endpoint before giving up (default: 3)
+        retry_delay: Seconds to wait between retries (default: 60)
     
     Raises:
         pytest.fail: If any HTTPS endpoint validation fails
     """
     import requests
+    import time
     
     logger.info(f"\n🔍 Testing {len(endpoint_info_list)} HTTPS endpoint(s)...\n")
     
@@ -265,53 +270,71 @@ def assert_https_endpoints_valid(endpoint_info_list, validate_cert=True, validat
         hostname = app['hostname']
         url = app['url']
         
-        logger.info(f"[{idx}/{len(endpoint_info_list)}] {app_name}")
-        logger.info(f"      URL: {url}")
-        
-        # Validate HTTPS certificate if requested
-        if validate_cert:
-            logger.info(f"      Testing HTTPS certificate...")
+        for attempt in range(max_retries):
+            endpoint_problems = []
             
-            cert_problems, response_info = validate_https_certificate(
-                url=url,
-                expected_hostname=hostname
-            )
+            if attempt > 0:
+                logger.info(f"      ⏳ Retrying endpoint {app_name} (attempt {attempt + 1}/{max_retries})...")
             
-            if cert_problems:
-                logger.info(f"      ✗ HTTPS certificate validation failed")
-                all_problems.extend([f"{app_name}: {p}" for p in cert_problems])
-            else:
-                logger.info(f"      ✓ HTTPS certificate is valid")
-        
-        # Validate http-debug app if requested
-        if validate_app:
-            app_problems, response_data = validate_http_debug_app(
-                url=url,
-                expected_hostname=hostname,
-                app_name=app_name
-            )
+            logger.info(f"[{idx}/{len(endpoint_info_list)}] {app_name}")
+            logger.info(f"      URL: {url}")
             
-            if app_problems:
-                all_problems.extend(app_problems)
-        else:
-            # Just make a basic HTTP request to verify endpoint works
-            logger.info(f"      Making HTTPS request...")
-            try:
-                response = requests.get(url, timeout=30, verify=True)
-                if response.status_code == 200:
-                    logger.info(f"      ✓ HTTP {response.status_code} - Application responding")
+            # Validate HTTPS certificate if requested
+            if validate_cert:
+                logger.info(f"      Testing HTTPS certificate...")
+                
+                cert_problems, response_info = validate_https_certificate(
+                    url=url,
+                    expected_hostname=hostname,
+                    max_retries=1,  # No inner retries; outer loop handles it
+                )
+                
+                if cert_problems:
+                    logger.info(f"      ✗ HTTPS certificate validation failed")
+                    endpoint_problems.extend([f"{app_name}: {p}" for p in cert_problems])
                 else:
-                    error_msg = f"Unexpected status code: HTTP {response.status_code}"
+                    logger.info(f"      ✓ HTTPS certificate is valid")
+            
+            # Validate http-debug app if requested
+            if validate_app:
+                app_problems, response_data = validate_http_debug_app(
+                    url=url,
+                    expected_hostname=hostname,
+                    app_name=app_name
+                )
+                
+                if app_problems:
+                    endpoint_problems.extend(app_problems)
+            else:
+                # Just make a basic HTTP request to verify endpoint works
+                logger.info(f"      Making HTTPS request...")
+                try:
+                    response = requests.get(url, timeout=30, verify=True)
+                    if response.status_code == 200:
+                        logger.info(f"      ✓ HTTP {response.status_code} - Application responding")
+                    else:
+                        error_msg = f"Unexpected status code: HTTP {response.status_code}"
+                        logger.info(f"      ✗ {error_msg}")
+                        endpoint_problems.append(f"{app_name}: {error_msg}")
+                except requests.exceptions.SSLError as e:
+                    error_msg = f"SSL error: {e}"
                     logger.info(f"      ✗ {error_msg}")
-                    all_problems.append(f"{app_name}: {error_msg}")
-            except requests.exceptions.SSLError as e:
-                error_msg = f"SSL error: {e}"
-                logger.info(f"      ✗ {error_msg}")
-                all_problems.append(f"{app_name}: {error_msg}")
-            except Exception as e:
-                error_msg = f"Request failed: {e}"
-                logger.info(f"      ✗ {error_msg}")
-                all_problems.append(f"{app_name}: {error_msg}")
+                    endpoint_problems.append(f"{app_name}: {error_msg}")
+                except Exception as e:
+                    error_msg = f"Request failed: {e}"
+                    logger.info(f"      ✗ {error_msg}")
+                    endpoint_problems.append(f"{app_name}: {error_msg}")
+            
+            # Check if any SSL-related errors warrant a retry
+            has_ssl_errors = any("SSL error" in p or "ssl" in p.lower() for p in endpoint_problems)
+            if endpoint_problems and has_ssl_errors and attempt < max_retries - 1:
+                logger.info(f"      ⏳ Endpoint had SSL errors, retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                continue
+            
+            # Either succeeded or hit non-SSL errors or exhausted retries
+            all_problems.extend(endpoint_problems)
+            break
         
         logger.info("")
     

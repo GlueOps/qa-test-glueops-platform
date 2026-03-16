@@ -1202,72 +1202,82 @@ def validate_certificate_secret(core_v1, secret_name, namespace, expected_hostna
     return problems, cert_info
 
 
-def validate_https_certificate(url, expected_hostname=None):
+def validate_https_certificate(url, expected_hostname=None, max_retries=3, retry_delay=60):
     """
     Validate HTTPS certificate via SSL connection.
     
     Args:
         url: HTTPS URL to test
         expected_hostname: Expected hostname in certificate (optional)
+        max_retries: Number of attempts before giving up (default: 3)
+        retry_delay: Seconds to wait between retries (default: 60)
     
     Returns:
         tuple: (problems, response_info)
     """
     from urllib.parse import urlparse
     
-    problems = []
-    response_info = {}
-    
-    try:
-        parsed = urlparse(url)
-        hostname = parsed.hostname
-        port = parsed.port or 443
+    for attempt in range(max_retries):
+        problems = []
+        response_info = {}
         
-        context = ssl.create_default_context()
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname
+            port = parsed.port or 443
+            
+            context = ssl.create_default_context()
+            
+            with socket.create_connection((hostname, port), timeout=10) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert_der = ssock.getpeercert(binary_form=True)
+                    cert = x509.load_der_x509_certificate(cert_der, default_backend())
+                    
+                    subject = cert.subject
+                    issuer = cert.issuer
+                    not_after = cert.not_valid_after_utc
+                    
+                    cn_attr = subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)
+                    common_name = cn_attr[0].value if cn_attr else "N/A"
+                    
+                    issuer_org = issuer.get_attributes_for_oid(x509.oid.NameOID.ORGANIZATION_NAME)
+                    issuer_name = issuer_org[0].value if issuer_org else "Unknown"
+                    
+                    try:
+                        san_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+                        san_names = [name.value for name in san_ext.value]
+                    except x509.ExtensionNotFound:
+                        san_names = []
+                    
+                    response_info = {
+                        'common_name': common_name,
+                        'issuer': issuer_name,
+                        'not_after': not_after,
+                        'sans': san_names
+                    }
+                    
+                    check_hostname = expected_hostname or hostname
+                    if check_hostname not in san_names and check_hostname != common_name:
+                        problems.append(f"Hostname mismatch: expected '{check_hostname}', cert CN: {common_name}, SANs: {san_names}")
+                    
+                    if not problems:
+                        logger.info(f"      CN: {common_name}")
+                        logger.info(f"      Issuer: {issuer_name}")
+                        logger.info(f"      Expires: {not_after}")
+                    
+        except ssl.SSLError as e:
+            problems.append(f"SSL error: {e}")
+        except socket.timeout:
+            problems.append(f"Connection timeout to {url}")
+        except Exception as e:
+            problems.append(f"HTTPS validation failed: {e}")
         
-        with socket.create_connection((hostname, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=hostname) as ssock:
-                cert_der = ssock.getpeercert(binary_form=True)
-                cert = x509.load_der_x509_certificate(cert_der, default_backend())
-                
-                subject = cert.subject
-                issuer = cert.issuer
-                not_after = cert.not_valid_after_utc
-                
-                cn_attr = subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)
-                common_name = cn_attr[0].value if cn_attr else "N/A"
-                
-                issuer_org = issuer.get_attributes_for_oid(x509.oid.NameOID.ORGANIZATION_NAME)
-                issuer_name = issuer_org[0].value if issuer_org else "Unknown"
-                
-                try:
-                    san_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-                    san_names = [name.value for name in san_ext.value]
-                except x509.ExtensionNotFound:
-                    san_names = []
-                
-                response_info = {
-                    'common_name': common_name,
-                    'issuer': issuer_name,
-                    'not_after': not_after,
-                    'sans': san_names
-                }
-                
-                check_hostname = expected_hostname or hostname
-                if check_hostname not in san_names and check_hostname != common_name:
-                    problems.append(f"Hostname mismatch: expected '{check_hostname}', cert CN: {common_name}, SANs: {san_names}")
-                
-                if not problems:
-                    logger.info(f"      CN: {common_name}")
-                    logger.info(f"      Issuer: {issuer_name}")
-                    logger.info(f"      Expires: {not_after}")
-                
-    except ssl.SSLError as e:
-        problems.append(f"SSL error: {e}")
-    except socket.timeout:
-        problems.append(f"Connection timeout to {url}")
-    except Exception as e:
-        problems.append(f"HTTPS validation failed: {e}")
+        if not problems:
+            return problems, response_info
+        
+        if attempt < max_retries - 1:
+            logger.info(f"      ✗ {problems[-1]}, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
+            time.sleep(retry_delay)
     
     return problems, response_info
 
