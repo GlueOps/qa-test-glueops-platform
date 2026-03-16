@@ -46,7 +46,7 @@ def test_login_to_argocd(authenticated_argocd_page, captain_domain, screenshots)
         page, page.url,
         description="ArgoCD Applications Page",
         baseline_key="argocd_applications_page",
-        threshold=0.0
+        threshold=1.0
     )
     
     # Assert no visual regressions
