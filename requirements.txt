@@ -30,5 +30,5 @@ pylint==4.0.4              # Code linting
 types-requests==2.32.4.20260107  # Type stubs for requests library
 
 # Visual regression testing
-pixelmatch==0.3.0          # Fast pixel-level image comparison
+pixelmatch==0.4.0          # Fast pixel-level image comparison
 numpy==2.4.2               # Image array processing for pixelmatch
