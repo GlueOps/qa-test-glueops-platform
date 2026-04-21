@@ -22,7 +22,7 @@ Pillow==12.1.1             # Image processing for QR code decoding
 pyzbar==0.1.9              # QR code decoding library
 
 # GitHub API
-PyGithub==2.8.1            # GitHub API client for GitOps tests
+PyGithub==2.9.0            # GitHub API client for GitOps tests
 
 # Static analysis and code quality
 mypy==1.19.1               # Static type checking
